@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.png" width="140" alt="PikaMaxxing"></p>
+
 # PikaMaxxing plugin
 
 Claude Code plugin for [PikaMaxxing](https://pikamaxxing.vercel.app):

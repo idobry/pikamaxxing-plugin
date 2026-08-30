@@ -1,0 +1,64 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/Applications/PikaMaxxing.app/Contents/MacOS/PikaMaxxing\" state-hook 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/Applications/PikaMaxxing.app/Contents/MacOS/PikaMaxxing\" state-hook thinking 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/Applications/PikaMaxxing.app/Contents/MacOS/PikaMaxxing\" state-hook thinking 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/Applications/PikaMaxxing.app/Contents/MacOS/PikaMaxxing\" state-hook done 2>/dev/null || true"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/Applications/PikaMaxxing.app/Contents/MacOS/PikaMaxxing\" report-usage 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/Applications/PikaMaxxing.app/Contents/MacOS/PikaMaxxing\" state-hook alert 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

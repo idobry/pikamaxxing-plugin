@@ -1,0 +1,14 @@
+{
+  "name": "pikamaxxing",
+  "owner": {
+    "name": "idobry"
+  },
+  "description": "PikaMaxxing: raise pokemon from your Claude Code token usage.",
+  "plugins": [
+    {
+      "name": "pikamaxxing",
+      "source": "./plugin",
+      "description": "Your Claude Code token usage raises pokemon."
+    }
+  ]
+}

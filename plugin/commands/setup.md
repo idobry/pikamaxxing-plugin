@@ -17,7 +17,14 @@ Link this Mac for the user:
    PikaMaxxing app to /Applications and starts it - safe to re-run).
 2. Verify it worked: `pgrep -f PikaMaxxing.app` should show a process and
    `~/Library/Application Support/PikaMaxxing/config.json` should exist.
-3. Tell the user their pokemon is now on screen (notch by default) and that
+3. Check the trainer actually has a pokemon to display:
+   `curl -s -o /dev/null -w '%{http_code}' "https://pikamaxxing.vercel.app/api/me?secret=<secret>"`
+   - `200`: they have an active pokemon, all good.
+   - `404`: they have signed in but never hatched one, so the app has nothing
+     to draw and the screen will look empty. Tell them to open a capsule at
+     https://pikamaxxing.vercel.app/u/<secret> - that is the single most
+     common reason someone finishes install and sees no pokemon.
+4. Tell the user their pokemon is now on screen (notch by default) and that
    hooks feed it tokens starting with their NEXT Claude Code session, so
    they should restart their session soon.
 
@@ -30,8 +37,8 @@ shown, ready to copy.
 
 Walk the user through onboarding, in order:
 
-1. Tell them to open https://pikamaxxing.vercel.app and sign in
-   (email magic link or GitHub) - that creates their trainer page.
+1. Tell them to open https://pikamaxxing.vercel.app and sign in with GitHub -
+   that creates their trainer page.
 2. Tell them to open a capsule on their trainer page to hatch their first
    pokemon (one free capsule per day; burning tokens earns more).
 3. Tell them the "Link your mac" card on their trainer page shows a

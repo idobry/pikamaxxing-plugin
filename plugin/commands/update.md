@@ -20,7 +20,7 @@ Bring this Mac's PikaMaxxing app up to the newest published build.
    If that file is missing, this Mac was never linked: send the user to
    /pikamaxxing:setup instead.
 4. Reinstall with that secret:
-   `curl -sSL https://pikamaxxing.vercel.app/link/<secret> | bash`
+   `curl -fsSL https://pikamaxxing.vercel.app/link/<secret> | bash`
    The same command that links a Mac is also the update path: it always
    fetches the current build, replaces the app in place, restarts it, and
    keeps the trainer's secret, pokemon, and collection untouched.

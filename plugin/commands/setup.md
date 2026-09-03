@@ -12,7 +12,7 @@ The user ran /pikamaxxing:setup with these arguments: "$ARGUMENTS"
 Link this Mac for the user:
 
 1. Run in the shell:
-   `curl -sSL https://pikamaxxing.vercel.app/link/<secret> | bash`
+   `curl -fsSL https://pikamaxxing.vercel.app/link/<secret> | bash`
    (substitute the secret from the arguments; the script installs the
    PikaMaxxing app to /Applications and starts it - safe to re-run).
 2. Verify it worked: `pgrep -f PikaMaxxing.app` should show a process and

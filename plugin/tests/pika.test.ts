@@ -46,8 +46,6 @@ function stubs(on: any) {
     return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify(body) } }
   })
   on('session.start', () => ({ cwd: '/work' }))
-  on('turn.start', ($: any, e: any) => ({ turnId: e.turnId }))
-  on('turn.complete', () => ({ text: '' }))
   // Stands for what Claude Code (or a later mod) draws in the band
   on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine band'] }))
   return fetched

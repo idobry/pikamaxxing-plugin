@@ -17,7 +17,7 @@ async function load($) {
     const team = (pool.pets || []).filter(p => p.team_pos).sort((a, b) => a.team_pos - b.team_pos)
     const mon = team[0] || (pool.pets || [])[0]
     if (!mon) return
-    const r = await $.http.fetch(base + '/api/cells/' + mon.sprite + '?h=12')
+    const r = await $.http.fetch(base + '/api/cells/' + mon.sprite)  // server picks the size
     if (!r.ok) return
     pet = JSON.parse(r.text)
     label = mon.species + (mon.shiny ? ' ✦' : '') + ' · ' + mon.tokens.toLocaleString() + ' tokens'

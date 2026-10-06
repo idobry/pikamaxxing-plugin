@@ -25,6 +25,8 @@ const POOL = {
 }
 
 // Two 2x1-cell frames, packed the way /api/cells packs them
+const PNG1 = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4nGP8z8Dwn4GBgYGJAQoAHxcCAk+Uzr4AAAAASUVORK5CYII='
+
 const CELLS = {
   columns: 2,
   rows: 1,
@@ -32,17 +34,17 @@ const CELLS = {
   frames: ['gCUAAAAA/wAAAAABIAAAAAAAAAEAAAAB', 'IAAAAAAAAAEAAAABgCUAAAD/AAAAAAAB'],
 }
 
-function stubs(on: any) {
+function stubs(on: any, env: Record<string, string> = { HOME: '/home/test' }, cellsBody: any = CELLS) {
   mock.clock(on)
   const fetched: string[] = []
   on('command.register', () => ({ value: undefined }))
   on('store.get', () => ({ value: undefined }))
   on('store.set', () => ({ value: undefined }))
-  on('env.get', () => ({ value: '/home/test' }))
+  on('env.get', ($: any, e: any) => ({ value: env[e.name] }))
   on('fs.read', () => ({ value: JSON.stringify({ secret: 's3cr3t', url: 'https://pika.test' }) }))
   on('http.fetch', ($: any, e: any) => {
     fetched.push(e.url)
-    const body = e.url.includes('/api/pool') ? POOL : CELLS
+    const body = e.url.includes('/api/pool') ? POOL : cellsBody
     return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify(body) } }
   })
   on('session.start', () => ({ cwd: '/work' }))
@@ -63,6 +65,17 @@ test('the lead pokemon walks in the band with its label', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /Pikachu .*12.*345 tokens/ })).toBeDefined()
   // the engine's own band content is kept below ours
   expect(await ui.find({ type: 'Text', text: 'engine band' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a kitty-graphics terminal gets a real Image, not cells', async ($, on) => {
+  stubs(on, { HOME: '/home/test', GHOSTTY_RESOURCES_DIR: '/Applications/Ghostty' },
+        { ...CELLS, img: { columns: 8, rows: 4, frames: [PNG1, PNG1] } })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Image' })).toBeDefined()
+  expect(await ui.find({ type: 'Raster' })).toBeUndefined()
   await ui.unmount()
 })
 

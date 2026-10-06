@@ -4,9 +4,10 @@
 // /pika toggles it. Draws nothing when the Mac isn't linked or the server is down.
 const FALLBACK = 'https://pikamaxxing.vercel.app'
 
-let pet = null     // {columns, rows, ms, frames: [base64]} from /api/cells
+let pet = null     // {columns, rows, ms, frames, img} from /api/cells
 let label = ''
 let hidden = false
+let gfx = false    // terminal speaks the kitty graphics protocol: real pixels
 
 async function load($) {
   try {
@@ -28,6 +29,7 @@ export function register(on) {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'pika', description: 'Show or hide your PikaMaxxing pokemon' })
     hidden = (await $.store.get('hidden')) === true
+    gfx = Boolean((await $.env.get('GHOSTTY_RESOURCES_DIR')) || (await $.env.get('KITTY_WINDOW_ID')))
     await load($)
     if (pet) $.clock.every(pet.ms, () => { if (!hidden) $.ui.invalidate('ui.render') })
     return next(e)
@@ -42,19 +44,20 @@ export function register(on) {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (hidden || !pet || e.surface !== 'terminal') return next(e)
-    const { Box, Text, Raster } = $.ui.resolve(e)
+    const { Box, Text, Raster, Image } = $.ui.resolve(e)
     const theirs = await next(e)
     const i = Math.floor(Date.now() / pet.ms) % pet.frames.length
+    const mon = gfx && pet.img
+      ? Image({ key: 'pika', source: { png: pet.img.frames[i % pet.img.frames.length] },
+                columns: pet.img.columns, rows: pet.img.rows, alt: label })
+      : Raster({ key: 'pika', columns: pet.columns, rows: pet.rows, cells: pet.frames[i] })
     return Box({
       flexDirection: 'column',
       children: [
         Box({
           flexDirection: 'row',
           columnGap: 2,
-          children: [
-            Raster({ key: 'pika', columns: pet.columns, rows: pet.rows, cells: pet.frames[i] }),
-            Text({ dimColor: true, children: [label] }),
-          ],
+          children: [mon, Text({ dimColor: true, children: [label] })],
         }),
         ...(theirs ? [theirs] : []),
       ],

@@ -38,6 +38,12 @@ const PACK = {
 // /api/cells shape (plain terminals): two 2x1-cell walk frames
 const CELLS = { columns: 2, rows: 1, ms: 300,
                 frames: ['gCUAAAAA/wAAAAABIAAAAAAAAAEAAAAB', 'IAAAAAAAAAEAAAABgCUAAAD/AAAAAAAB'] }
+// /api/pack?fmt=svg: same shape, frames are SVG path markup
+const DOT = '<path fill="#ff0000" d="M0 0h1v1h-1z"/>'
+const SVGPACK = {
+  box: { columns: 4, rows: 3, w: 10, h: 10 },
+  anims: { Idle: { ms: [100], down: [DOT] }, Walk: { ms: [100], down: [DOT], right: [DOT], left: [DOT] } },
+}
 const GHOSTTY = { HOME: '/home/test', GHOSTTY_RESOURCES_DIR: '/Applications/Ghostty' }
 
 function stubs(on: any, env: Record<string, string> = GHOSTTY) {
@@ -52,7 +58,8 @@ function stubs(on: any, env: Record<string, string> = GHOSTTY) {
   on('fs.read', () => ({ value: JSON.stringify({ secret: 's3cr3t', url: 'https://pika.test' }) }))
   on('http.fetch', ($: any, e: any) => {
     fetched.push(e.url)
-    const body = e.url.includes('/api/pool') ? POOL : e.url.includes('/api/pack/') ? PACK : CELLS
+    const body = e.url.includes('/api/pool') ? POOL
+      : e.url.includes('fmt=svg') ? SVGPACK : e.url.includes('/api/pack/') ? PACK : CELLS
     return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify(body) } }
   })
   on('process.run', ($: any, e: any) => { ran.push([...e.argv]); return { value: { exitCode: 0, stdout: '', stderr: '' } } })
@@ -158,11 +165,26 @@ test('a plain terminal falls back to Raster cells', async ($, on) => {
   await ui.unmount()
 })
 
-test('the desktop app gets the engine band only', async ($, on) => {
+test('the desktop app draws the pokemon as an SVG stage with the same controls', async ($, on) => {
+  const { fetched, clock } = stubs(on, { HOME: '/home/test' })
+  await $.session.start({ surface: 'desktop', isInteractive: true, cwd: '/work' })
+  await clock.advance(300)
+  expect(fetched.some((u) => u.endsWith('/api/pack/0025?fmt=svg'))).toBe(true)
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  const svg: any = await ui.find({ type: 'Svg' })
+  expect(svg).toBeDefined()
+  expect(svg.props.source).toContain(DOT)
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  for (const key of ['stop', 'prev', 'next', 'page']) expect(await ui.find({ key })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the VS Code chat gets the engine band only', async ($, on) => {
   stubs(on)
   await start($)
-  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  const ui = await $.ui.mount({ ...BAND, surface: 'vscode' })
+  expect(await ui.find({ type: 'Svg' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'engine band' })).toBeDefined()
   await ui.unmount()
 })

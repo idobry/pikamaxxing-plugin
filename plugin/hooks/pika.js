@@ -33,8 +33,12 @@ const short = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3
 let base = FALLBACK, secret = '', page = ''
 let team = []            // slot-ordered pets from /api/pool
 let idx = 0              // which team member this session shows
-const packs = {}         // sprite -> anim pack (gfx) or cells (fallback)
+const packs = {}         // 'mode:sprite' -> frames for that mode
+const loading = new Set()
 let gfx = false          // kitty graphics (Ghostty, kitty): real pixel frames
+// png: terminal Image (kitty graphics), cells: terminal Raster, svg: desktop app
+let mode = 'cells'
+const SVG_STAGE = 320, SVG_H = 56, SVG_SPEED = 6 // desktop stage in CSS px
 let stopped = false
 let cols = 80            // band width, learned at render
 let phase = 'idle', tool = '', quietMs = 0
@@ -45,8 +49,9 @@ const P = { anim: null, show: null, fi: 0, left: 0, once: null, dir: 1, x: null,
             thinkShow: 'Charge', idleIn: rand(10, 30) * 1000, idleMode: 'Sit', idleHold: 0 }
 
 const cur = () => team[idx]
-const pack = () => cur() && packs[cur().sprite]
-const has = (name) => !gfx || Boolean(pack()?.anims?.[name])
+const pack = () => cur() && packs[mode + ':' + cur().sprite]
+const has = (name) => mode === 'cells' || Boolean(pack()?.anims?.[name])
+const modeFor = (surface) => surface === 'desktop' ? 'svg' : surface === 'terminal' ? (gfx ? 'png' : 'cells') : null
 const cut = () => { P.fi = 0; P.left = 0 }
 
 function nextBeat() {
@@ -131,21 +136,31 @@ function step() {
     P.left += frames.ms[P.fi]
   }
 
-  const w = box().columns, stage = Math.max(w, cols - CTRL_W - 2)
+  const { w, stage, speed } = geo()
   if (P.x === null) P.x = rand(0, stage - w)
   if (show === 'Walk') {
     if (P.x <= 0 && P.dir < 0) P.dir = 1
     else if (P.x >= stage - w && P.dir > 0) P.dir = -1
-    P.x += P.dir
+    P.x += P.dir * speed
   }
   P.x = Math.max(0, Math.min(P.x, stage - w))
 }
 
-// current animation's frames: {ms, imgs} (gfx) or walk cells (fallback)
+// where the pokemon roams: terminal columns, or CSS px on the desktop stage
+function geo() {
+  if (mode === 'svg') {
+    const b = box()
+    return { w: Math.round(SVG_H * b.w / b.h), stage: SVG_STAGE, speed: SVG_SPEED }
+  }
+  const w = box().columns
+  return { w, stage: Math.max(w, cols - CTRL_W - 2), speed: 1 }
+}
+
+// current animation's frames: {ms, imgs}; cells mode only has the walk cycle
 function frameList() {
   const p = pack()
   if (!p) return { ms: [], imgs: [] }
-  if (!gfx) return { ms: p.frames.map(() => p.ms), imgs: p.frames }
+  if (mode === 'cells') return { ms: p.frames.map(() => p.ms), imgs: p.frames }
   const a = p.anims[P.show] || p.anims.Idle || p.anims.Walk
   const imgs = P.show === 'Walk' ? (P.dir < 0 ? a.left : a.right) : a.down
   return { ms: a.ms, imgs }
@@ -153,15 +168,19 @@ function frameList() {
 
 const box = () => {
   const p = pack()
-  return !p ? { columns: 1, rows: 1 } : gfx ? p.box : { columns: p.columns, rows: p.rows }
+  return !p ? { columns: 1, rows: 1, w: 1, h: 1 } : mode === 'cells' ? { columns: p.columns, rows: p.rows } : p.box
 }
 
 async function loadPack($, sprite) {
-  if (packs[sprite]) return
+  const key = mode + ':' + sprite
+  if (packs[key] || loading.has(key)) return
+  loading.add(key)
+  const path = { png: '/api/pack/' + sprite, svg: '/api/pack/' + sprite + '?fmt=svg', cells: '/api/cells/' + sprite }[mode]
   try {
-    const r = await $.http.fetch(base + (gfx ? '/api/pack/' : '/api/cells/') + sprite)
-    if (r.ok) packs[sprite] = JSON.parse(r.text)
+    const r = await $.http.fetch(base + path)
+    if (r.ok) packs[key] = JSON.parse(r.text)
   } catch (e) { /* keep showing what we have */ }
+  loading.delete(key)
 }
 
 async function loadTeam($) {
@@ -213,6 +232,7 @@ export function register(on) {
     await $.command.register({ name: 'pika', description: 'Stop or resume your PikaMaxxing pokemon' })
     stopped = (await $.store.get('stopped')) === true
     gfx = Boolean((await $.env.get('GHOSTTY_RESOURCES_DIR')) || (await $.env.get('KITTY_WINDOW_ID')))
+    mode = modeFor(e.surface) || mode
     await loadTeam($)
     $.clock.every(TICK, () => {
       if (stopped || !pack()) return
@@ -251,8 +271,11 @@ export function register(on) {
   }).catch(passThrough)
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.surface !== 'terminal' || !cur() || !pack()) return next(e)
-    const { Box, Text, Button, Raster, Image } = $.ui.resolve(e)
+    const want = modeFor(e.surface)
+    if (!want || !cur()) return next(e)
+    if (want !== mode) { mode = want; P.x = null } // session shown on another app
+    if (!pack()) { loadPack($, cur().sprite).then(() => $.ui.invalidate('ui.render')); return next(e) }
+    const { Box, Text, Button, Raster, Image, Svg } = $.ui.resolve(e)
     cols = e.props.bodyColumns
     const theirs = await next(e)
     const below = theirs ? [theirs] : []
@@ -272,9 +295,20 @@ export function register(on) {
 
     const b = box(), f = frameList()
     const img = f.imgs[P.fi % Math.max(1, f.imgs.length)]
-    const mon = gfx
-      ? Image({ key: 'pika', source: { png: img }, columns: b.columns, rows: b.rows, alt: cur().species })
-      : Raster({ key: 'pika', columns: b.columns, rows: b.rows, cells: img })
+    let mon
+    if (mode === 'svg') { // the pokemon roams inside one SVG stage; viewBox in sprite px
+      const s = SVG_H / b.h
+      mon = Svg({
+        alt: cur().species, width: SVG_STAGE, height: SVG_H,
+        source: `<svg xmlns="http://www.w3.org/2000/svg" width="${SVG_STAGE}" height="${SVG_H}" `
+              + `viewBox="0 0 ${(SVG_STAGE / s).toFixed(2)} ${b.h}" shape-rendering="crispEdges">`
+              + `<g transform="translate(${((P.x || 0) / s).toFixed(2)} 0)">${img || ''}</g></svg>`,
+      })
+    } else if (mode === 'png') {
+      mon = Image({ key: 'pika', source: { png: img }, columns: b.columns, rows: b.rows, alt: cur().species })
+    } else {
+      mon = Raster({ key: 'pika', columns: b.columns, rows: b.rows, cells: img })
+    }
     const pet = cur()
     return Box({
       flexDirection: 'column',
@@ -282,7 +316,7 @@ export function register(on) {
         Box({
           flexDirection: 'row',
           children: [
-            Box({ flexDirection: 'column', width: CTRL_W, children: [
+            Box({ flexDirection: 'column', ...(mode === 'svg' ? {} : { width: CTRL_W }), children: [
               Box({ flexDirection: 'row', columnGap: 2, children: [
                 Button({ key: 'stop', label: '■', plain: true, dimColor: true, onPress: () => setStopped($, true) }),
                 Button({ key: 'prev', label: '‹', plain: true, dimColor: true, onPress: () => switchTo($, -1) }),
@@ -293,7 +327,7 @@ export function register(on) {
               Text({ dimColor: true, wrap: 'truncate',
                      children: [(idx + 1) + '/' + team.length + ' · ' + short(pet.tokens)] }),
             ] }),
-            Box({ paddingLeft: P.x || 0, children: [mon] }),
+            mode === 'svg' ? mon : Box({ paddingLeft: P.x || 0, children: [mon] }),
           ],
         }),
         ...below,

@@ -353,8 +353,9 @@ export function register(on) {
             dbtn('next', '›', () => switchTo($, 1)),
           ] }),
           Box({ flexDirection: 'row', columnGap: 1, children: [
-            dbtn('stop', 'Stop', () => setStopped($, true)),
-            dbtn('page', 'Trainer page ↗', () => openPage($)),
+            // flat glyphs: U+FE0E asks for the text (monochrome) form, not the colour emoji
+            dbtn('stop', '\u23F9\uFE0E', () => setStopped($, true)),
+            dbtn('page', '\u{1F310}\uFE0E', () => openPage($)),
           ] }),
         ] }),
       ])

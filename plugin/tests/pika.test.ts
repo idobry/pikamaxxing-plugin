@@ -192,6 +192,8 @@ test('the desktop app draws the pokemon as an SVG stage with the same controls',
   expect(JSON.stringify(await ui.find({ key: 'card' })).indexOf('"minimize"'))
     .toBeLessThan(JSON.stringify(await ui.find({ key: 'card' })).indexOf('<svg'))
   expect(svg.props.source).not.toContain('#fff8e7') // no cream block on the app background
+  expect((await ui.find({ key: 'stop' }) as any).props.label).toBe('\u23F9\uFE0E')
+  expect((await ui.find({ key: 'page' }) as any).props.label).toBe('\u{1F310}\uFE0E')
   const frame: any = await ui.find({ key: 'card' })
   expect(frame.props.borderStyle).toBe('round')
   expect(JSON.stringify(frame)).toContain('"page"')

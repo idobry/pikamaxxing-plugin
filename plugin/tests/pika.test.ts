@@ -136,7 +136,15 @@ test('a failed report stays queued and goes out with the next one', async ($, on
   await turn($)
   await clock.advance(100)
   expect(posts[posts.length - 1].tokens).toBe(350)
-  expect(saved.get('pending:sess-A')).toBe(0)
+  expect(saved.has('pending:sess-A')).toBe(false) // a zero balance leaves no key
+})
+
+test('tokens a closed session never sent are adopted and credited once', async ($, on) => {
+  const { posts, saved, clock } = stubs(on, { store: { 'pending:gone-session': 500 } })
+  await start($)
+  await clock.advance(60000)
+  expect(posts.map((p) => p.tokens)).toContain(500)
+  expect(saved.has('pending:gone-session')).toBe(false)
 })
 
 test('unlinked: a quiet sign-in line, nothing reported', async ($, on) => {

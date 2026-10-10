@@ -5,7 +5,7 @@
 // Every session's pokemon shares one scene, so parallel agents battle when
 // idle and charge together when busy, and a pokemon that levels up evolves
 // on screen. Terminal (kitty graphics or colored cells) and desktop app (SVG).
-const VERSION = '2.0.0'
+const VERSION = '2.0.1'
 const FALLBACK = 'https://pikamaxxing.vercel.app'
 const TICK = 100         // ms per engine step; the terminal band redraws at most 10/s
 const SLEEP_MS = 300000  // quiet this long -> nap
@@ -425,6 +425,23 @@ async function loadTeam($) {
   } catch (e) { /* offline: keep what we have */ }
 }
 
+// a zero balance leaves no key behind: the store is shared and capped at 4 MiB
+const savePending = ($) => pending > 0 ? $.store.set('pending:' + mySid, pending) : $.store.delete('pending:' + mySid)
+
+// tokens a session earned but never got credited before it closed: the leader
+// takes them over (one session, so nothing is posted twice)
+async function adoptOrphans($) {
+  if (!isLeader()) return
+  for (const k of await $.store.keys()) {
+    if (!k.startsWith('pending:') || k === 'pending:' + mySid) continue
+    const sid = k.slice(8)
+    if (pets.has(sid)) continue // still running: it reports its own
+    pending += Number((await $.store.get(k)) || 0)
+    await $.store.delete(k)
+  }
+  await savePending($)
+}
+
 async function flush($) {
   if (!secret || legacy || pending <= 0 || account === 'unknown_secret') return
   const sending = pending
@@ -432,7 +449,7 @@ async function flush($) {
     const r = await api($, '/api/usage', { secret, tokens: sending })
     if (!r.ok) return
     pending = Math.max(0, pending - sending)
-    await $.store.set('pending:' + mySid, pending)
+    await savePending($)
     if (r.data?.id) {
       absorb([r.data])
       for (const p of pets.values()) if (p.evo) loadPack($, p.evo.to)
@@ -667,7 +684,7 @@ export function register(on) {
       $.ui.invalidate('ui.render')
     })
     $.clock.every(POLL_MS, () => { readOthers($).catch(() => {}) })
-    $.clock.every(60000, () => { loadTeam($); flush($) })
+    $.clock.every(60000, async () => { await loadTeam($); await adoptOrphans($).catch(() => {}); flush($) })
     api($, '/api/version').then((r) => {
       if (r.data?.plugin && newer(r.data.plugin, VERSION)) {
         updateHint = 'PikaMaxxing ' + r.data.plugin + ' is out: /plugin marketplace update pikamaxxing, then /reload-plugins'
@@ -703,7 +720,7 @@ export function register(on) {
     const add = legacy ? 0 : earned(e.usage)
     if (add > 0) {
       pending += add
-      await $.store.set('pending:' + mySid, pending)
+      await savePending($)
       flush($)
     }
     if (!e.agentId) await setPhase($, 'done')

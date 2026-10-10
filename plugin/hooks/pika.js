@@ -38,7 +38,8 @@ const loading = new Set()
 let gfx = false          // kitty graphics (Ghostty, kitty): real pixel frames
 // png: terminal Image (kitty graphics), cells: terminal Raster, svg: desktop app
 let mode = 'cells'
-const SVG_STAGE = 320, SVG_H = 56, SVG_SPEED = 6 // desktop stage in CSS px
+const SVG_H = 56, SVG_SPEED = 6 // desktop sprite height and walk speed, CSS px
+const GAUGE_W = 8               // terminal EXP bar cells
 let stopped = false
 let cols = 80            // band width, learned at render
 let phase = 'idle', tool = '', quietMs = 0
@@ -150,7 +151,7 @@ function step() {
 function geo() {
   if (mode === 'svg') {
     const b = box()
-    return { w: Math.round(SVG_H * b.w / b.h), stage: SVG_STAGE, speed: SVG_SPEED }
+    return { w: Math.round(SVG_H * b.w / b.h), stage: STAGE_W - 16, speed: SVG_SPEED }
   }
   const w = box().columns
   return { w, stage: Math.max(w, cols - CTRL_W - 2), speed: 1 }
@@ -295,43 +296,105 @@ export function register(on) {
 
     const b = box(), f = frameList()
     const img = f.imgs[P.fi % Math.max(1, f.imgs.length)]
-    let mon
-    if (mode === 'svg') { // the pokemon roams inside one SVG stage; viewBox in sprite px
-      const s = SVG_H / b.h
-      mon = Svg({
-        alt: cur().species, width: SVG_STAGE, height: SVG_H,
-        source: `<svg xmlns="http://www.w3.org/2000/svg" width="${SVG_STAGE}" height="${SVG_H}" `
-              + `viewBox="0 0 ${(SVG_STAGE / s).toFixed(2)} ${b.h}" shape-rendering="crispEdges">`
-              + `<g transform="translate(${((P.x || 0) / s).toFixed(2)} 0)">${img || ''}</g></svg>`,
-      })
-    } else if (mode === 'png') {
-      mon = Image({ key: 'pika', source: { png: img }, columns: b.columns, rows: b.rows, alt: cur().species })
-    } else {
-      mon = Raster({ key: 'pika', columns: b.columns, rows: b.rows, cells: img })
-    }
     const pet = cur()
+    const name = pet.species + (pet.shiny ? ' ✦' : '')
+    const pct = Math.max(0, Math.min(100, pet.exp_pct ?? 0))
+
+    if (mode === 'svg') {
+      return Box({
+        flexDirection: 'column',
+        rowGap: 1,
+        children: [
+          Svg({ alt: name + ', ' + phaseLabel() + ', ' + pct + '% to next level',
+                width: CARD_W, height: CARD_H, source: card(pet, name, pct, img, b) }),
+          Box({ flexDirection: 'row', columnGap: 1, children: [
+            Button({ key: 'stop', label: 'Stop', onPress: () => setStopped($, true) }),
+            Button({ key: 'prev', label: '‹ Prev', onPress: () => switchTo($, -1) }),
+            Button({ key: 'next', label: 'Next ›', onPress: () => switchTo($, 1) }),
+            Button({ key: 'page', label: 'Trainer page', onPress: () => openPage($) }),
+          ] }),
+          ...below,
+        ],
+      })
+    }
+
+    const mon = mode === 'png'
+      ? Image({ key: 'pika', source: { png: img }, columns: b.columns, rows: b.rows, alt: pet.species })
+      : Raster({ key: 'pika', columns: b.columns, rows: b.rows, cells: img })
+    const full = Math.round(GAUGE_W * pct / 100)
     return Box({
       flexDirection: 'column',
       children: [
         Box({
           flexDirection: 'row',
           children: [
-            Box({ flexDirection: 'column', ...(mode === 'svg' ? {} : { width: CTRL_W }), children: [
+            Box({ flexDirection: 'column', width: CTRL_W, children: [
               Box({ flexDirection: 'row', columnGap: 2, children: [
                 Button({ key: 'stop', label: '■', plain: true, dimColor: true, onPress: () => setStopped($, true) }),
                 Button({ key: 'prev', label: '‹', plain: true, dimColor: true, onPress: () => switchTo($, -1) }),
                 Button({ key: 'next', label: '›', plain: true, dimColor: true, onPress: () => switchTo($, 1) }),
                 Button({ key: 'page', label: '↗', plain: true, dimColor: true, onPress: () => openPage($) }),
               ] }),
-              Text({ wrap: 'truncate', children: [pet.species + (pet.shiny ? ' ✦' : '')] }),
-              Text({ dimColor: true, wrap: 'truncate',
-                     children: [(idx + 1) + '/' + team.length + ' · ' + short(pet.tokens)] }),
+              Text({ wrap: 'truncate', children: [name + ' ', Text({ dimColor: true, children: [(idx + 1) + '/' + team.length] })] }),
+              Box({ key: 'exp', flexDirection: 'row', children: [
+                Text({ color: pct >= 100 ? 'yellow' : 'cyan', children: ['━'.repeat(full)] }),
+                Text({ dimColor: true, children: ['─'.repeat(GAUGE_W - full) + ' '] }),
+                Text({ dimColor: pct < 100, color: pct >= 100 ? 'yellow' : undefined,
+                       children: [pct >= 100 ? 'MAX' : pct + '%'] }),
+              ] }),
             ] }),
-            mode === 'svg' ? mon : Box({ paddingLeft: P.x || 0, children: [mon] }),
+            Box({ paddingLeft: P.x || 0, children: [mon] }),
           ],
         }),
         ...below,
       ],
     })
   })
+}
+
+// ---- desktop card: one SVG in the PikaMaxxing pokedex palette ----
+const CARD_W = 440, CARD_H = 96
+const STAGE_X = 168, STAGE_Y = 10, STAGE_W = CARD_W - STAGE_X - 10, STAGE_H = CARD_H - 20
+const GROUND = STAGE_Y + STAGE_H - 10
+const C = { card: '#fff8e7', edge: '#7f1d1d', ink: '#3a2a1a', dim: '#6d5c3c', stage: '#f3e8c8',
+            ground: '#e2d6b0', track: '#e8dcb8', exp: '#3b82f6', max: '#b45309', ball: '#b91c1c' }
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
+
+function phaseLabel() {
+  const resting = phase === 'idle' || phase === 'done'
+  if (resting && quietMs > SLEEP_MS) return 'napping'
+  if (phase === 'tool') return 'using ' + (tool || 'a tool')
+  return { think: 'thinking…', done: 'done!', alert: 'needs you', idle: 'hanging out' }[phase] || 'hanging out'
+}
+
+function card(pet, name, pct, img, b) {
+  const font = `font-family="ui-monospace, SFMono-Regular, Menlo, monospace"`
+  const dots = team.map((_, i) => {
+    const cx = 18 + i * 14
+    return i === idx
+      ? `<circle cx="${cx}" cy="58" r="5" fill="${C.ball}" stroke="${C.edge}" stroke-width="1.5"/>`
+        + `<line x1="${cx - 5}" y1="58" x2="${cx + 5}" y2="58" stroke="${C.edge}" stroke-width="1.5"/>`
+        + `<circle cx="${cx}" cy="58" r="1.8" fill="${C.card}" stroke="${C.edge}" stroke-width="1"/>`
+      : `<circle cx="${cx}" cy="58" r="4" fill="none" stroke="${C.dim}" stroke-width="1.2" opacity=".55"/>`
+  }).join('')
+  const bx = 38, bw = 92, maxed = pct >= 100
+  const sw = Math.round(SVG_H * b.w / b.h), x = STAGE_X + 8 + (P.x || 0)
+  const sprite = img
+    ? `<ellipse cx="${x + sw / 2}" cy="${GROUND}" rx="${sw * 0.28}" ry="3" fill="${C.edge}" opacity=".13"/>`
+      + `<svg x="${x}" y="${GROUND - SVG_H + 3}" width="${sw}" height="${SVG_H}" viewBox="0 0 ${b.w} ${b.h}" `
+      + `shape-rendering="crispEdges">${img}</svg>`
+    : ''
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${CARD_H}" viewBox="0 0 ${CARD_W} ${CARD_H}">`
+    + `<rect x="1" y="1" width="${CARD_W - 2}" height="${CARD_H - 2}" rx="10" fill="${C.card}" stroke="${C.edge}" stroke-width="2"/>`
+    + `<text x="14" y="27" ${font} font-size="15" font-weight="700" fill="${C.ink}">${esc(name)}</text>`
+    + `<text x="14" y="43" ${font} font-size="11" fill="${C.dim}">${esc(phaseLabel())}</text>`
+    + dots
+    + `<text x="14" y="80" ${font} font-size="9" font-weight="700" fill="${C.dim}">EXP</text>`
+    + `<rect x="${bx}" y="72" width="${bw}" height="9" rx="4.5" fill="${C.track}" stroke="${C.edge}" stroke-width="1.2"/>`
+    + (pct > 0 ? `<rect x="${bx}" y="72" width="${Math.max(9, bw * pct / 100).toFixed(1)}" height="9" rx="4.5" fill="${maxed ? C.max : C.exp}"/>` : '')
+    + `<text x="${bx + bw + 6}" y="80" ${font} font-size="9" font-weight="700" fill="${maxed ? C.max : C.dim}">${maxed ? 'MAX' : pct + '%'}</text>`
+    + `<rect x="${STAGE_X}" y="${STAGE_Y}" width="${STAGE_W}" height="${STAGE_H}" rx="7" fill="${C.stage}"/>`
+    + `<line x1="${STAGE_X + 6}" y1="${GROUND}" x2="${STAGE_X + STAGE_W - 6}" y2="${GROUND}" stroke="${C.ground}" stroke-width="2" stroke-linecap="round"/>`
+    + sprite
+    + `</svg>`
 }

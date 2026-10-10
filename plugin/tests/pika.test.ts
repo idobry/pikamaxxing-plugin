@@ -24,8 +24,8 @@ const POOL = {
   name: 'Ido',
   page: 'https://pika.test/u/s3cr3t',
   pets: [
-    { id: 2, species: 'Onix', sprite: '0095', tokens: 5, team_pos: 2, shiny: false },
-    { id: 1, species: 'Pikachu', sprite: '0025', tokens: 12345, team_pos: 1, shiny: false },
+    { id: 2, species: 'Onix', sprite: '0095', tokens: 5, team_pos: 2, shiny: false, exp_pct: 100 },
+    { id: 1, species: 'Pikachu', sprite: '0025', tokens: 12345, team_pos: 1, shiny: false, exp_pct: 62 },
   ],
 }
 
@@ -95,8 +95,11 @@ test('slot 1 shows as a real Image with controls, label and slot count', async (
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await ui.find({ type: 'Image' })).toBeDefined()
   for (const key of ['stop', 'prev', 'next', 'page']) expect(await ui.find({ key })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'Pikachu' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^1\/2 · 12\.3k$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Pikachu/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '1/2' })).toBeDefined()
+  // EXP gauge: 8 cells, 62% -> 5 filled, then the percentage
+  expect(await ui.find({ type: 'Text', text: '━━━━━' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '62%' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'engine band' })).toBeDefined()
   await ui.unmount()
 })
@@ -121,10 +124,11 @@ test('› and ‹ cycle through the team queue', async ($, on) => {
   await ui.press({ key: 'next' })
   await clock.advance(200)
   expect(fetched.some((u) => u.endsWith('/api/pack/0095'))).toBe(true)
-  expect(await ui.find({ type: 'Text', text: 'Onix' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Onix/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'MAX' })).toBeDefined() // maxed gauge
   await ui.press({ key: 'prev' })
   await clock.advance(200)
-  expect(await ui.find({ type: 'Text', text: 'Pikachu' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Pikachu/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -175,6 +179,10 @@ test('the desktop app draws the pokemon as an SVG stage with the same controls',
   const svg: any = await ui.find({ type: 'Svg' })
   expect(svg).toBeDefined()
   expect(svg.props.source).toContain(DOT)
+  expect(svg.props.source).toContain('>Pikachu</text>')
+  expect(svg.props.source).toContain('>EXP</text>')
+  expect(svg.props.source).toContain('>62%</text>')
+  expect(svg.props.alt).toMatch(/62% to next level/)
   expect(await ui.find({ type: 'Image' })).toBeUndefined()
   for (const key of ['stop', 'prev', 'next', 'page']) expect(await ui.find({ key })).toBeDefined()
   await ui.unmount()

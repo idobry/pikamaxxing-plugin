@@ -5,7 +5,7 @@
 // Every session's pokemon shares one scene, so parallel agents battle when
 // idle and charge together when busy, and a pokemon that levels up evolves
 // on screen. Terminal (kitty graphics or colored cells) and desktop app (SVG).
-const VERSION = '2.1.2'
+const VERSION = '2.2.0'
 const FALLBACK = 'https://pikamaxxing.vercel.app'
 const TICK = 100         // ms per engine step; the terminal band redraws at most 10/s
 const SLEEP_MS = 300000  // quiet this long -> nap
@@ -13,7 +13,7 @@ const LIVE_MS = 15000    // a session not heard from this long has left the scen
 const BEAT_MS = 5000     // presence heartbeat
 const POLL_MS = 2000     // how often a session reads the others
 const MAX_PETS = 3
-const LEFT_W = 16, RIGHT_W = 32 // terminal: brand on the left, info and controls on the right, columns
+const LEFT_W = 20, RIGHT_W = 32 // terminal: brand on the left, info and controls on the right, columns
 const LINK_TOOL = 'link'
 const PACK_V = 2         // pack contents version (2: Strike frames)
 
@@ -244,7 +244,7 @@ function frameList(p) {
 // ---- ceremonies shared by the scene ----
 // Battle: decided on the server (stats, types, luck) and played here from its
 // log on wall-clock time, so every session's band shows the same fight.
-const B_APPROACH = 3000, B_MOVE = 1200, B_IMPACT = 350, B_KO = 2000, B_RETREAT = 2000
+const B_APPROACH = 3000, B_MOVE = 1500, B_FIRE = 200, B_IMPACT = 650, B_KO = 3200, B_RETREAT = 2000
 const moveEvents = (b) => b.log.events.filter((e) => e.t === 'move')
 const battleLen = (b) => B_APPROACH + moveEvents(b).length * B_MOVE + B_KO + B_RETREAT
 // not every species has every move: fall back to the nearest one its sheet has
@@ -252,12 +252,24 @@ const ANIM_FALLBACK = { Pose: ['Pose', 'Hop', 'Idle'], Tumble: ['Tumble', 'Sleep
                    Shoot: ['Shoot', 'Attack', 'Idle'], Swing: ['Swing', 'Attack', 'Idle'], Double: ['Double', 'Attack', 'Idle'],
                    Strike: ['Strike', 'Attack', 'Idle'], Attack: ['Attack', 'Idle'], Hurt: ['Hurt', 'Idle'], Hop: ['Hop', 'Idle'] }
 const anim = (p, name) => (ANIM_FALLBACK[name] || [name, 'Idle']).find((n) => has(p, n)) || 'Idle'
+// what each type's move looks like: [terminal glyph, terminal colour, desktop colour, desktop shape]
+const TYPE_FX = {
+  electric: ['⚡', 'yellow', '#facc15', 'bolt'], fire: ['🔥', 'red', '#f97316', 'flame'], water: ['💧', 'blue', '#38bdf8', 'drop'],
+  grass: ['🍃', 'green', '#22c55e', 'leaf'], ice: ['❄', 'cyan', '#a5f3fc', 'star'], psychic: ['✺', 'magenta', '#e879f9', 'ring'],
+  ghost: ['👻', 'magenta', '#a855f7', 'ring'], poison: ['☠', 'magenta', '#a855f7', 'drop'], ground: ['▲', 'yellow', '#b45309', 'rock'],
+  rock: ['◆', 'white', '#a8a29e', 'rock'], fighting: ['👊', 'red', '#ef4444', 'star'], normal: ['✦', 'white', '#e5e7eb', 'star'],
+  flying: ['〰', 'cyan', '#7dd3fc', 'leaf'], bug: ['✂', 'green', '#84cc16', 'star'], dragon: ['✹', 'blue', '#818cf8', 'flame'],
+  fairy: ['✿', 'magenta', '#f9a8d4', 'star'], steel: ['⚙', 'white', '#94a3b8', 'rock'], dark: ['◐', 'gray', '#6b7280', 'ring'],
+  shell: ['$', 'green', '#22c55e', 'star'], script: ['λ', 'yellow', '#eab308', 'bolt'], net: ['⇄', 'cyan', '#06b6d4', 'ring'],
+}
+const fxOf = (type) => TYPE_FX[type] || TYPE_FX.normal
 
-// the fight at time t: HP of both sides and a callout over whoever just got hit
+// the fight at time t: HP, the message line, the move in flight, and callouts
 function battleNow(t = Date.now() - (battle?.start || 0)) {
   if (!battle) return null
-  const evs = moveEvents(battle), L = battle.log
-  let hp = [L.a.hp, L.b.hp], callout = null
+  const evs = moveEvents(battle), L = battle.log, name = (side) => L[side].name
+  const winSide = L.winner, loseSide = winSide === 'a' ? 'b' : 'a', koAt = B_APPROACH + evs.length * B_MOVE
+  let hp = [L.a.hp, L.b.hp], callout = null, msg = '', move = null, phase = 'approach'
   evs.forEach((e, j) => {
     const at = B_APPROACH + j * B_MOVE + B_IMPACT
     if (t >= at) hp = e.hp
@@ -266,7 +278,23 @@ function battleNow(t = Date.now() - (battle?.start || 0)) {
       callout = { who: e.who === 'a' ? 'b' : 'a', text, kind: !e.hit || e.eff === 0 ? 'miss' : e.crit || e.eff >= 2 ? 'big' : 'hit' }
     }
   })
-  return { t, hp, max: [L.a.hp, L.b.hp], callout, names: [L.a.name, L.b.name] }
+  if (t < B_APPROACH) {
+    msg = battle.b === 'wild' ? 'A wild ' + name('b') + ' appeared!' : name('a') + ' vs ' + name('b') + '!'
+  } else if (t < koAt) {
+    phase = 'move'
+    const i = Math.floor((t - B_APPROACH) / B_MOVE), e = evs[i], u = t - B_APPROACH - i * B_MOVE
+    move = { e, u, att: e.who, def: e.who === 'a' ? 'b' : 'a', fx: fxOf(e.type),
+             flight: u >= B_FIRE && u < B_IMPACT ? (u - B_FIRE) / (B_IMPACT - B_FIRE) : null,
+             burst: e.hit && e.eff > 0 && u >= B_IMPACT && u < B_IMPACT + 350 }
+    const after = !e.hit ? 'It missed!' : e.eff === 0 ? 'It had no effect…' : e.crit ? 'A critical hit!'
+      : e.eff >= 2 ? "It's super effective!" : e.eff < 1 ? "It's not very effective…" : ''
+    msg = name(e.who) + ' used ' + e.move + '!' + (u >= B_IMPACT && after ? ' ' + after : '')
+  } else {
+    phase = t < koAt + B_KO ? 'ko' : 'retreat'
+    msg = t < koAt + 1300 ? name(loseSide) + ' fainted!' : name(winSide) + ' wins!'
+  }
+  return { t, hp, max: [L.a.hp, L.b.hp], callout, names: [L.a.name, L.b.name], msg, move, phase,
+           win: winSide, lose: loseSide, joy: phase !== 'approach' && phase !== 'move' }
 }
 
 function battleStep(sp) {
@@ -284,27 +312,29 @@ function battleStep(sp) {
   }
   const evs = moveEvents(battle), koAt = B_APPROACH + evs.length * B_MOVE
   const win = battle.log.winner === 'a' ? a : b, lose = win === a ? b : a
+  const fw = win === a ? 1 : -1, fl = lose === a ? 1 : -1
   if (t < B_APPROACH) { // walk in to meet in the middle
     a.ov = walkTo(a, ga, L) ? { name: 'Idle', face: 1 } : { name: 'Walk', face: L >= a.x ? 1 : -1 }
     b.ov = walkTo(b, gb, R) ? { name: 'Idle', face: -1 } : { name: 'Walk', face: R >= b.x ? 1 : -1 }
-  } else if (t < koAt) { // one move per event: attack, then the hit (or the dodge) lands
+  } else if (t < koAt) { // one move per event: wind up, the move flies, the hit (or the dodge) lands
     const i = Math.floor((t - B_APPROACH) / B_MOVE), e = evs[i], u = t - B_APPROACH - i * B_MOVE
     const att = e.who === 'a' ? a : b, def = att === a ? b : a
     const fa = att === a ? 1 : -1
     att.ov = { name: anim(att, e.anim), face: fa }
     if (u < B_IMPACT) def.ov = { name: 'Idle', face: -fa }
-    else if (e.hit && e.eff > 0) def.ov = { name: u < B_IMPACT + 500 ? anim(def, 'Hurt') : 'Idle', face: -fa, flash: u < B_IMPACT + 150 }
+    else if (e.hit && e.eff > 0) def.ov = { name: u < B_IMPACT + 550 ? anim(def, 'Hurt') : 'Idle', face: -fa, flash: u < B_IMPACT + 150 }
     else def.ov = { name: anim(def, 'Hop'), face: -fa }
-  } else if (t < koAt + B_KO) { // the winner poses, the loser goes down
-    win.ov = { name: anim(win, 'Pose'), face: win === a ? 1 : -1 }
-    lose.ov = { name: anim(lose, 'Tumble'), face: lose === a ? 1 : -1 }
-  } else { // the winner walks home; the loser stays down (a wild one runs off)
+  } else if (t < koAt + B_KO) { // the loser reels and collapses; the winner celebrates
+    const k = t - koAt
+    lose.ov = k < 500 ? { name: anim(lose, 'Hurt'), face: fl } : { name: anim(lose, k < 1300 ? 'Tumble' : 'Faint'), face: fl, fainted: k >= 500 }
+    win.ov = { name: anim(win, k < 1300 ? 'Pose' : 'Hop'), face: fw, happy: true }
+  } else { // the winner walks home happy; the loser stays down (a wild one limps off)
     const gw = win === a ? ga : gb, home = win.sid === 'wild' ? gw.stage : Math.round((gw.lo + gw.hi) / 2)
-    win.ov = walkTo(win, gw, home) ? { name: 'Idle', face: 1 } : { name: 'Walk', face: home >= win.x ? 1 : -1 }
+    win.ov = walkTo(win, gw, home) ? { name: anim(win, 'Hop'), face: 1, happy: true } : { name: 'Walk', face: home >= win.x ? 1 : -1, happy: true }
     if (lose.sid === 'wild') {
       const gl = lose === a ? ga : gb
       lose.ov = walkTo(lose, gl, gl.stage) ? { name: 'Idle', face: 1 } : { name: 'Walk', face: 1 }
-    } else lose.ov = { name: anim(lose, 'Faint'), face: lose === a ? 1 : -1 }
+    } else lose.ov = { name: anim(lose, 'Faint'), face: fl, fainted: true }
   }
   return true
 }
@@ -920,6 +950,23 @@ export function register(on) {
         Text({ children: [String(bn.hp[i])] }),
       ] })
     }
+    const sideOf = (side) => pets.get(side === 'a' ? battle.a : battle.b)
+    const at = (p, row, key, text, props = {}) => sprites.push(Box({ position: 'absolute', left: Math.max(0, Math.round(p.x || 0)), top: row,
+      children: [Text({ key, bold: true, children: [text], ...props })] }))
+    if (bn?.move) { // the move flies from attacker to defender, then bursts on the target
+      const { fx, att, def, flight, burst } = bn.move, A = sideOf(att), D = sideOf(def)
+      if (A && D && flight !== null) {
+        const from = (A.x || 0) + (att === 'a' ? boxOf(A).columns : 0), to = (D.x || 0) + (def === 'a' ? boxOf(D).columns - 2 : 0)
+        sprites.push(Box({ position: 'absolute', left: Math.max(0, Math.round(from + (to - from) * flight)), top: 1,
+          children: [Text({ key: 'fx', bold: true, color: fx[1], children: [fx[0]] })] }))
+      }
+      if (D && burst) at(D, 1, 'burst', fx[0] + fx[0], { color: fx[1] })
+    }
+    if (bn?.joy) { // sparkles for the winner, dizzy for the one that fainted
+      const W = sideOf(bn.win), Lz = sideOf(bn.lose)
+      if (W) at(W, 0, 'joy', Math.floor(bn.t / 300) % 2 ? '✨ ♪' : '♪ ✨', { color: 'yellow' })
+      if (Lz && bn.phase === 'ko' || Lz && Lz.sid !== 'wild') at(Lz, 0, 'dizzy', '💫', {})
+    }
     if (bn?.callout) {
       const target = pets.get(bn.callout.who === 'a' ? battle.a : battle.b)
       if (target) sprites.push(Box({ position: 'absolute', left: Math.max(0, Math.round(target.x || 0)), top: 0, children: [
@@ -942,8 +989,10 @@ export function register(on) {
     const lvl = pet.stats ? 'L' + pet.stats.level + ' ' : ''
     return Box({ flexDirection: 'column', children: [
       Box({ flexDirection: 'row', children: [
-        // left: the brand, centred in the band's height
-        Box({ flexDirection: 'row', alignItems: 'center', columnGap: 1, width: LEFT_W, height: H, children: [
+        // left: the brand, centred in the band's height; during a fight, the battle message
+        bn ? Box({ flexDirection: 'column', justifyContent: 'center', width: LEFT_W, height: H, children: [
+          Text({ key: 'battle-msg', bold: true, wrap: 'wrap', children: [bn.msg] }),
+        ] }) : Box({ flexDirection: 'row', alignItems: 'center', columnGap: 1, width: LEFT_W, height: H, children: [
           ...(mode === 'png' ? [Image({ key: 'logo', source: { png: LOGO_PNG }, columns: 2, rows: 1, alt: ' ' })] : []),
           Text({ color: 'red', bold: true, children: ['PikaMaxxing'] }),
         ] }),
@@ -994,7 +1043,7 @@ function phaseLabel(p) {
   if (p.evo) return 'evolving!'
   if (battle && (battle.a === p.sid || battle.b === p.sid) && Date.now() >= battle.start) {
     const now = battleNow(), mine = battle.a === p.sid ? 0 : 1
-    return 'vs ' + now.names[1 - mine] + ' · HP ' + now.hp[mine] + '/' + now.max[mine] + ' · ' + now.hp[1 - mine] + '/' + now.max[1 - mine]
+    return 'HP ' + now.hp[mine] + '/' + now.max[mine] + ' vs ' + now.hp[1 - mine] + '/' + now.max[1 - mine]
   }
   if (resting(p) && quiet(p) > SLEEP_MS) return 'napping'
   if (p.phase === 'tool') return 'using ' + (p.tool || 'a tool')
@@ -1052,8 +1101,9 @@ function animSprite(p, i, n, left, ground, h, budget) {
     if (secs > 0.05) glide = `<animateTransform attributeName="transform" type="translate" from="${x0} 0" to="${to} 0" dur="${secs.toFixed(2)}s" fill="freeze"/>`
   }
   const white = p.ov?.glow
-    ? `<filter id="${tag}w"><feFlood flood-color="#fff"/><feComposite in2="SourceAlpha" operator="in"/></filter>` : ''
-  return `<defs>${defs}${white}</defs><g transform="translate(${x0} 0)">${glide}`
+    ? `<filter id="${tag}w"><feFlood flood-color="#fff"/><feComposite in2="SourceAlpha" operator="in"/></filter>`
+    : p.ov?.fainted ? `<filter id="${tag}w"><feColorMatrix type="saturate" values="0"/></filter>` : ''
+  return `<defs>${defs}${white}</defs><g transform="translate(${x0} 0)"${p.ov?.fainted ? ' opacity=".55"' : ''}>${glide}`
     + `<ellipse cx="${sw / 2}" cy="${ground}" rx="${sw * 0.28}" ry="${h > 40 ? 3 : 2}" fill="#000" opacity=".22"/>`
     + `<svg x="0" y="${ground - h + 3}" width="${sw}" height="${h}" viewBox="0 0 ${b.w} ${b.h}" shape-rendering="crispEdges"`
     + `${white ? ` filter="url(#${tag}w)"` : ''}>${uses}</svg></g>`
@@ -1068,6 +1118,61 @@ function strip(sp) {
     + `<line x1="4" y1="${ground}" x2="${STRIP_W - 4}" y2="${ground}" stroke="${C.ground}" stroke-opacity=".35" stroke-width="1.5" stroke-linecap="round"/>`
     + sprites(sp, 8, ground, STRIP_SPR)
     + `</svg>`
+}
+
+// a move's look on the desktop card, drawn at (0,0) and moved into place
+function fxShape(kind, c) {
+  const star = (r) => Array.from({ length: 10 }, (_, i) => {
+    const a = Math.PI / 5 * i - Math.PI / 2, q = i % 2 ? r * 0.45 : r
+    return (Math.cos(a) * q).toFixed(1) + ',' + (Math.sin(a) * q).toFixed(1)
+  }).join(' ')
+  return {
+    bolt: `<polyline points="-12,-8 -2,-2 -6,2 6,8 0,0 4,-4" fill="none" stroke="${c}" stroke-width="3" stroke-linejoin="round"/>`,
+    flame: `<circle r="9" fill="${c}" opacity=".9"/><circle r="5" cx="2" fill="#fde047"/>`,
+    drop: `<circle r="7" fill="${c}"/><circle r="3" cx="-9" cy="2" fill="${c}" opacity=".7"/>`,
+    leaf: `<ellipse rx="9" ry="4" fill="${c}" transform="rotate(-25)"/><ellipse rx="6" ry="3" cx="-10" cy="5" fill="${c}" opacity=".7" transform="rotate(20)"/>`,
+    ring: `<circle r="8" fill="none" stroke="${c}" stroke-width="3"/><circle r="3" fill="${c}"/>`,
+    rock: `<polygon points="0,-9 8,0 0,9 -8,0" fill="${c}"/>`,
+    star: `<polygon points="${star(9)}" fill="${c}"/>`,
+  }[kind] || `<polygon points="${star(9)}" fill="${c}"/>`
+}
+
+// the battle layer over the stage: message, the move in flight, the impact,
+// sparkles for the winner. Each redraw restarts SMIL at 0, so the projectile
+// glides from where it is now to the target over the time that is left.
+function battleFx(sp, left, ground, h, font) {
+  const bn = battle && Date.now() >= battle.start ? battleNow() : null
+  if (!bn) return ''
+  const posOf = (side) => {
+    const p = pets.get(side === 'a' ? battle.a : battle.b)
+    if (!p || !packFor(spriteOf(p))) return null
+    const b = boxOf(p), sw = Math.round(h * b.w / b.h)
+    return { x: left + (p.x || 0) + sw / 2, y: ground - h * 0.45, top: ground - h }
+  }
+  let out = `<text x="${left}" y="20" ${font} font-size="12" font-weight="700" fill="#f5f5f5">${esc(bn.msg)}</text>`
+  if (bn.move) {
+    const { fx, att, def, flight, burst, u } = bn.move, A = posOf(att), D = posOf(def)
+    if (A && D && flight !== null) {
+      const x = A.x + (D.x - A.x) * flight, y = A.y + (D.y - A.y) * flight, left_ms = Math.max(1, B_IMPACT - u)
+      out += `<g transform="translate(${x.toFixed(1)} ${y.toFixed(1)})"><animateTransform attributeName="transform" type="translate" `
+           + `from="${x.toFixed(1)} ${y.toFixed(1)}" to="${D.x.toFixed(1)} ${D.y.toFixed(1)}" dur="${left_ms}ms" fill="freeze"/>`
+           + fxShape(fx[3], fx[2]) + `</g>`
+    }
+    if (D && burst) {
+      out += `<g transform="translate(${D.x.toFixed(1)} ${D.y.toFixed(1)})">` + Array.from({ length: 8 }, (_, i) => {
+        const a = Math.PI / 4 * i, r1 = 10, r2 = 22
+        return `<line x1="${(Math.cos(a) * r1).toFixed(1)}" y1="${(Math.sin(a) * r1).toFixed(1)}" x2="${(Math.cos(a) * r2).toFixed(1)}" `
+             + `y2="${(Math.sin(a) * r2).toFixed(1)}" stroke="${fx[2]}" stroke-width="3" stroke-linecap="round"/>`
+      }).join('') + `</g>`
+    }
+  }
+  if (bn.joy) {
+    const W = posOf(bn.win)
+    if (W) out += [[-16, -6, 5], [14, -14, 4], [2, -22, 6]].map(([dx, dy, r]) =>
+      `<polygon transform="translate(${(W.x + dx).toFixed(1)} ${(W.top + dy + 14).toFixed(1)})" points="0,${-r} ${r * .3},${-r * .3} ${r},0 ${r * .3},${r * .3} 0,${r} ${-r * .3},${r * .3} ${-r},0 ${-r * .3},${-r * .3}" fill="#facc15">`
+      + `<animate attributeName="opacity" values="1;.2;1" dur="600ms" repeatCount="indefinite"/></polygon>`).join('')
+  }
+  return out
 }
 
 function card(pet, name, pct, sp, own) {
@@ -1093,5 +1198,6 @@ function card(pet, name, pct, sp, own) {
     + `<text x="${bx + bw + 6}" y="96" ${font} font-size="9" font-weight="700" fill="${maxed ? C.max : C.dim}">${maxed ? 'MAX' : pct + '%'}</text>`
     + `<line x1="${STAGE_X + 6}" y1="${GROUND}" x2="${STAGE_X + STAGE_W - 6}" y2="${GROUND}" stroke="${C.ground}" stroke-opacity=".35" stroke-width="2" stroke-linecap="round"/>`
     + sprites(sp, STAGE_X + 8, GROUND, SVG_H)
+    + battleFx(sp, STAGE_X + 8, GROUND, SVG_H, font)
     + `</svg>`
 }

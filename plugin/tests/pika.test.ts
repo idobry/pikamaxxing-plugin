@@ -291,7 +291,7 @@ test('a server-decided fight plays from its log: the hit lands, HP drops, a call
   const now = Date.now()
   const { clock } = stubs(on, { store: {
     's:sess-B': { slot: 1, phase: 'idle', tool: '', at: now, ts: now },
-    battle: { start: now - 3500, seed: 5, a: 'sess-A', b: 'sess-B', log: LOG(), manual: true }, // first move, after impact
+    battle: { start: now - 3800, seed: 5, a: 'sess-A', b: 'sess-B', log: LOG(), manual: true }, // first move, after impact
   } })
   await start($)
   await clock.advance(300)
@@ -301,6 +301,45 @@ test('a server-decided fight plays from its log: the hit lands, HP drops, a call
   expect(await ui.find({ type: 'Text', text: '17' })).toBeDefined()  // HP after the hit
   expect(await ui.find({ type: 'Text', text: /^vs Onix/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '-10' })).toBeDefined() // damage callout
+  expect(await ui.find({ type: 'Text', text: 'Onix used Surf!' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '💧💧' })).toBeDefined() // impact burst
+  await ui.unmount()
+})
+
+const battleAt = (ago: number) => {
+  const now = Date.now()
+  return { 's:sess-B': { slot: 1, phase: 'idle', tool: '', at: now, ts: now },
+           battle: { start: now - ago, seed: 5, a: 'sess-A', b: 'sess-B', log: LOG(), manual: true } }
+}
+
+test("the move's type flies across: Surf sends water", async ($, on) => {
+  const { clock } = stubs(on, { store: battleAt(3400) }) // first move, mid-flight
+  await start($)
+  await clock.advance(300)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: '💧' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the loser faints and the winner celebrates', async ($, on) => {
+  const { clock } = stubs(on, { store: battleAt(7400) }) // past the knockout
+  await start($)
+  await clock.advance(300)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: 'Pikachu wins!' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /✨/ })).toBeDefined()   // winner sparkles
+  expect(await ui.find({ type: 'Text', text: '💫' })).toBeDefined()   // loser dizzy
+  await ui.unmount()
+})
+
+test('the desktop card draws the move effect and the battle message', async ($, on) => {
+  const { clock } = stubs(on, { env: { HOME: '/home/test' }, store: battleAt(3400) })
+  await $.session.start({ surface: 'desktop', isInteractive: true, cwd: '/work' })
+  await clock.advance(300)
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  const src = (await ui.find({ type: 'Svg' }) as any).props.source
+  expect(src).toContain('Onix used Surf!')
+  expect(src).toContain('animateTransform') // the water drop glides to its target
   await ui.unmount()
 })
 

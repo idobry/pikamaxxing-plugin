@@ -97,8 +97,11 @@ test('slot 1 shows as a real Image with controls, label and slot count', async (
   for (const key of ['stop', 'prev', 'next', 'page']) expect(await ui.find({ key })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Pikachu/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '1/2' })).toBeDefined()
-  // EXP gauge: 8 cells, 62% -> 5 filled, then the percentage
-  expect(await ui.find({ type: 'Text', text: '━━━━━' })).toBeDefined()
+  // EXP gauge: 14 cells, 62% -> 9 filled, then the percentage
+  expect(await ui.find({ type: 'Text', text: '━'.repeat(9) })).toBeDefined()
+  // brand: logo picture plus the name
+  expect(await ui.find({ key: 'logo' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'PikaMaxxing' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '62%' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'engine band' })).toBeDefined()
   await ui.unmount()
@@ -110,7 +113,7 @@ test('thinking switches the pokemon into its Charge routine', async ($, on) => {
   await $.turn.start({ turnId: 't1' })
   await clock.advance(2500) // past the staggered first beat
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  const img: any = await ui.find({ type: 'Image' })
+  const img: any = await ui.find({ key: 'pika' })
   // Charge frames are GREEN in the fixture; a roaming walk or missing flourish shows RED
   expect([GREEN, RED]).toContain(img.props.source.png)
   await ui.unmount()
@@ -181,6 +184,7 @@ test('the desktop app draws the pokemon as an SVG stage with the same controls',
   expect(svg.props.source).toContain(DOT)
   expect(svg.props.source).toContain('>Pikachu</text>')
   expect(svg.props.source).toContain('>EXP</text>')
+  expect(svg.props.source).toContain('>PIKAMAXXING</text>')
   expect(svg.props.source).toContain('>62%</text>')
   expect(svg.props.alt).toMatch(/62% to next level/)
   expect(await ui.find({ type: 'Image' })).toBeUndefined()

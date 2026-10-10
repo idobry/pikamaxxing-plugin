@@ -6,7 +6,7 @@
 const FALLBACK = 'https://pikamaxxing.vercel.app'
 const TICK = 100        // ms per engine step; the band redraws at most 10/s
 const SLEEP_MS = 300000 // quiet this long -> nap (Mac: SESSION_SLEEP_SECS)
-const CTRL_W = 14       // columns for the left controls
+const BTN_W = 4, INFO_W = 20, CTRL_W = BTN_W + INFO_W + 1 // terminal left side, columns
 
 // behaviour tables, verbatim from the Mac app
 const IDLE_BEHAVIORS = ['Eat', 'Nod', 'LookUp', 'DeepBreath', 'Shake', 'Trip', 'Laying']
@@ -39,7 +39,10 @@ let gfx = false          // kitty graphics (Ghostty, kitty): real pixel frames
 // png: terminal Image (kitty graphics), cells: terminal Raster, svg: desktop app
 let mode = 'cells'
 const SVG_H = 56, SVG_SPEED = 6 // desktop sprite height and walk speed, CSS px
-const GAUGE_W = 8               // terminal EXP bar cells
+const GAUGE_W = 14              // terminal EXP bar cells
+// the PikaMaxxing logo, 14x12 pixel art: PNG for the terminal, paths for the desktop card
+const LOGO_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAHAAAABgCAYAAADFNvbQAAABM0lEQVR42u3cUQ3CMBRA0ZXghfAzBwhAAQbwgAY8YAAFE4CD/hDUgIM18Ea7wTnfBMJu+pKXJU2Xff/sAo5DTh0fiz7/lUe4bAIKiIAIKCACUl96nA6je8gt30M/8O97YnTP2/VbJ9AIRUAEREABEZBJ98DSB+yJbfe8zfmanEAjFAEREAEFREAmtI5+QWmPKRryoh9g+P87gUYoAiIgAgqIgNQVfhdXel/IuNL7PifQCEVABERAARGQ2nugPW/ee6ITaIQiIAIKiIAIyLt7oD3PCURABBQQAREQAQVEQAREQAEREAER8GcV74mJ3gfa+h6V1r79/JxAIxQBEVBABERABBQQAREQAQVEQARkhHtiZs49MUYoAiIgAgqIgNTeA+2Jbfc8J9AIRUAEREABEZCJvQBa9TbM3y6NugAAAABJRU5ErkJggg=='
+const LOGO_SVG = '<path fill="#9c492e" d="M0 0h2v1h-2zM12 0h2v1h-2zM1 1h2v1h-2zM11 1h2v1h-2zM2 2h2v1h-2zM10 2h2v1h-2zM1 8h2v1h-2zM11 8h2v1h-2zM1 9h2v1h-2zM11 9h2v1h-2z"/><path fill="#d97757" d="M0 1h1v1h-1zM13 1h1v1h-1zM1 2h1v1h-1zM12 2h1v1h-1zM1 3h3v1h-3zM10 3h3v1h-3zM2 4h10v1h-10zM1 5h12v1h-12zM0 6h14v1h-14zM0 7h14v1h-14zM0 8h1v1h-1zM3 8h8v1h-8zM13 8h1v1h-1zM0 9h1v1h-1zM3 9h8v1h-8zM13 9h1v1h-1zM1 10h12v1h-12zM2 11h10v1h-10z"/>'
 let stopped = false
 let cols = 80            // band width, learned at render
 let phase = 'idle', tool = '', quietMs = 0
@@ -322,25 +325,33 @@ export function register(on) {
       ? Image({ key: 'pika', source: { png: img }, columns: b.columns, rows: b.rows, alt: pet.species })
       : Raster({ key: 'pika', columns: b.columns, rows: b.rows, cells: img })
     const full = Math.round(GAUGE_W * pct / 100)
+    const btn = (key, label, onPress) => Button({ key, label, plain: true, dimColor: true, onPress })
     return Box({
       flexDirection: 'column',
       children: [
         Box({
           flexDirection: 'row',
           children: [
-            Box({ flexDirection: 'column', width: CTRL_W, children: [
-              Box({ flexDirection: 'row', columnGap: 2, children: [
-                Button({ key: 'stop', label: '■', plain: true, dimColor: true, onPress: () => setStopped($, true) }),
-                Button({ key: 'prev', label: '‹', plain: true, dimColor: true, onPress: () => switchTo($, -1) }),
-                Button({ key: 'next', label: '›', plain: true, dimColor: true, onPress: () => switchTo($, 1) }),
-                Button({ key: 'page', label: '↗', plain: true, dimColor: true, onPress: () => openPage($) }),
-              ] }),
-              Text({ wrap: 'truncate', children: [name + ' ', Text({ dimColor: true, children: [(idx + 1) + '/' + team.length] })] }),
+            // controls: a 2x2 grid of one-glyph buttons
+            Box({ flexDirection: 'column', width: BTN_W, children: [
+              Box({ flexDirection: 'row', columnGap: 1, children: [
+                btn('prev', '‹', () => switchTo($, -1)), btn('next', '›', () => switchTo($, 1)) ] }),
+              Box({ flexDirection: 'row', columnGap: 1, children: [
+                btn('stop', '■', () => setStopped($, true)), btn('page', '↗', () => openPage($)) ] }),
+            ] }),
+            // who it is, how far to the next level, and whose app this is
+            Box({ flexDirection: 'column', width: INFO_W, children: [
+              Text({ wrap: 'truncate', children: [Text({ bold: true, children: [name] }), ' ',
+                                                  Text({ dimColor: true, children: [(idx + 1) + '/' + team.length] })] }),
               Box({ key: 'exp', flexDirection: 'row', children: [
                 Text({ color: pct >= 100 ? 'yellow' : 'cyan', children: ['━'.repeat(full)] }),
                 Text({ dimColor: true, children: ['─'.repeat(GAUGE_W - full) + ' '] }),
                 Text({ dimColor: pct < 100, color: pct >= 100 ? 'yellow' : undefined,
                        children: [pct >= 100 ? 'MAX' : pct + '%'] }),
+              ] }),
+              Box({ flexDirection: 'row', columnGap: 1, children: [
+                ...(mode === 'png' ? [Image({ key: 'logo', source: { png: LOGO_PNG }, columns: 2, rows: 1, alt: ' ' })] : []),
+                Text({ color: 'red', dimColor: true, children: ['PikaMaxxing'] }),
               ] }),
             ] }),
             Box({ paddingLeft: P.x || 0, children: [mon] }),
@@ -353,7 +364,7 @@ export function register(on) {
 }
 
 // ---- desktop card: one SVG in the PikaMaxxing pokedex palette ----
-const CARD_W = 440, CARD_H = 96
+const CARD_W = 440, CARD_H = 108
 const STAGE_X = 168, STAGE_Y = 10, STAGE_W = CARD_W - STAGE_X - 10, STAGE_H = CARD_H - 20
 const GROUND = STAGE_Y + STAGE_H - 10
 const C = { card: '#fff8e7', edge: '#7f1d1d', ink: '#3a2a1a', dim: '#6d5c3c', stage: '#f3e8c8',
@@ -372,10 +383,10 @@ function card(pet, name, pct, img, b) {
   const dots = team.map((_, i) => {
     const cx = 18 + i * 14
     return i === idx
-      ? `<circle cx="${cx}" cy="58" r="5" fill="${C.ball}" stroke="${C.edge}" stroke-width="1.5"/>`
-        + `<line x1="${cx - 5}" y1="58" x2="${cx + 5}" y2="58" stroke="${C.edge}" stroke-width="1.5"/>`
-        + `<circle cx="${cx}" cy="58" r="1.8" fill="${C.card}" stroke="${C.edge}" stroke-width="1"/>`
-      : `<circle cx="${cx}" cy="58" r="4" fill="none" stroke="${C.dim}" stroke-width="1.2" opacity=".55"/>`
+      ? `<circle cx="${cx}" cy="74" r="5" fill="${C.ball}" stroke="${C.edge}" stroke-width="1.5"/>`
+        + `<line x1="${cx - 5}" y1="74" x2="${cx + 5}" y2="74" stroke="${C.edge}" stroke-width="1.5"/>`
+        + `<circle cx="${cx}" cy="74" r="1.8" fill="${C.card}" stroke="${C.edge}" stroke-width="1"/>`
+      : `<circle cx="${cx}" cy="74" r="4" fill="none" stroke="${C.dim}" stroke-width="1.2" opacity=".55"/>`
   }).join('')
   const bx = 38, bw = 92, maxed = pct >= 100
   const sw = Math.round(SVG_H * b.w / b.h), x = STAGE_X + 8 + (P.x || 0)
@@ -386,14 +397,15 @@ function card(pet, name, pct, img, b) {
     : ''
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${CARD_H}" viewBox="0 0 ${CARD_W} ${CARD_H}">`
     + `<rect x="1" y="1" width="${CARD_W - 2}" height="${CARD_H - 2}" rx="10" fill="${C.card}" stroke="${C.edge}" stroke-width="2"/>`
-    + `<text x="14" y="27" ${font} font-size="15" font-weight="700" fill="${C.ink}">${esc(name)}</text>`
-    + `<text x="14" y="43" ${font} font-size="11" fill="${C.dim}">${esc(phaseLabel())}</text>`
+    + `<svg x="14" y="10" width="17" height="15" viewBox="0 0 14 12" shape-rendering="crispEdges">${LOGO_SVG}</svg>`
+    + `<text x="36" y="22" ${font} font-size="10" font-weight="700" letter-spacing="1.5" fill="${C.ball}">PIKAMAXXING</text>`
+    + `<text x="14" y="45" ${font} font-size="15" font-weight="700" fill="${C.ink}">${esc(name)}</text>`
+    + `<text x="14" y="60" ${font} font-size="11" fill="${C.dim}">${esc(phaseLabel())}</text>`
     + dots
-    + `<text x="14" y="80" ${font} font-size="9" font-weight="700" fill="${C.dim}">EXP</text>`
-    + `<rect x="${bx}" y="72" width="${bw}" height="9" rx="4.5" fill="${C.track}" stroke="${C.edge}" stroke-width="1.2"/>`
-    + (pct > 0 ? `<rect x="${bx}" y="72" width="${Math.max(9, bw * pct / 100).toFixed(1)}" height="9" rx="4.5" fill="${maxed ? C.max : C.exp}"/>` : '')
-    + `<text x="${bx + bw + 6}" y="80" ${font} font-size="9" font-weight="700" fill="${maxed ? C.max : C.dim}">${maxed ? 'MAX' : pct + '%'}</text>`
-    + `<rect x="${STAGE_X}" y="${STAGE_Y}" width="${STAGE_W}" height="${STAGE_H}" rx="7" fill="${C.stage}"/>`
+    + `<text x="14" y="96" ${font} font-size="9" font-weight="700" fill="${C.dim}">EXP</text>`
+    + `<rect x="${bx}" y="88" width="${bw}" height="9" rx="4.5" fill="${C.track}" stroke="${C.edge}" stroke-width="1.2"/>`
+    + (pct > 0 ? `<rect x="${bx}" y="88" width="${Math.max(9, bw * pct / 100).toFixed(1)}" height="9" rx="4.5" fill="${maxed ? C.max : C.exp}"/>` : '')
+    + `<text x="${bx + bw + 6}" y="96" ${font} font-size="9" font-weight="700" fill="${maxed ? C.max : C.dim}">${maxed ? 'MAX' : pct + '%'}</text>`
     + `<line x1="${STAGE_X + 6}" y1="${GROUND}" x2="${STAGE_X + STAGE_W - 6}" y2="${GROUND}" stroke="${C.ground}" stroke-width="2" stroke-linecap="round"/>`
     + sprite
     + `</svg>`

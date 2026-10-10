@@ -304,6 +304,21 @@ test('a server-decided fight plays from its log: the hit lands, HP drops, a call
   await ui.unmount()
 })
 
+test('a physical move plays Strike, or Attack for species whose sheet has no Strike', async ($, on) => {
+  const now = Date.now()
+  const log = LOG()
+  log.events[0] = { ...log.events[0], who: 'a', move: 'Body Slam', type: 'normal', anim: 'Strike' }
+  const { clock } = stubs(on, { store: {
+    's:sess-B': { slot: 1, phase: 'idle', tool: '', at: now, ts: now },
+    battle: { start: now - 3200, seed: 5, a: 'sess-A', b: 'sess-B', log, manual: true }, // this session attacks
+  } })
+  await start($)
+  await clock.advance(300)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await ui.find({ key: 'pika' }) as any).props.source.png).toBe(BLUE) // the fixture sheet has Attack, no Strike
+  await ui.unmount()
+})
+
 test('alone, /pika battle brings a wild pokemon in for a server-decided fight', async ($, on) => {
   const { battles, saved, clock } = stubs(on)
   await start($)

@@ -5,7 +5,7 @@
 // Every session's pokemon shares one scene, so parallel agents battle when
 // idle and charge together when busy, and a pokemon that levels up evolves
 // on screen. Terminal (kitty graphics or colored cells) and desktop app (SVG).
-const VERSION = '2.1.0'
+const VERSION = '2.1.1'
 const FALLBACK = 'https://pikamaxxing.vercel.app'
 const TICK = 100         // ms per engine step; the terminal band redraws at most 10/s
 const SLEEP_MS = 300000  // quiet this long -> nap
@@ -15,6 +15,7 @@ const POLL_MS = 2000     // how often a session reads the others
 const MAX_PETS = 3
 const LEFT_W = 16, RIGHT_W = 32 // terminal: brand on the left, info and controls on the right, columns
 const LINK_TOOL = 'link'
+const PACK_V = 2         // pack contents version (2: Strike frames)
 
 // behaviour tables (from the original PikaMaxxing desktop overlay)
 const IDLE_BEHAVIORS = ['Eat', 'Nod', 'LookUp', 'DeepBreath', 'Shake', 'Trip', 'Laying']
@@ -249,7 +250,7 @@ const battleLen = (b) => B_APPROACH + moveEvents(b).length * B_MOVE + B_KO + B_R
 // not every species has every move: fall back to the nearest one its sheet has
 const ANIM_FALLBACK = { Pose: ['Pose', 'Hop', 'Idle'], Tumble: ['Tumble', 'Sleep', 'Hurt', 'Idle'], Faint: ['Sleep', 'Hurt', 'Idle'],
                    Shoot: ['Shoot', 'Attack', 'Idle'], Swing: ['Swing', 'Attack', 'Idle'], Double: ['Double', 'Attack', 'Idle'],
-                   Attack: ['Attack', 'Idle'], Hurt: ['Hurt', 'Idle'], Hop: ['Hop', 'Idle'] }
+                   Strike: ['Strike', 'Attack', 'Idle'], Attack: ['Attack', 'Idle'], Hurt: ['Hurt', 'Idle'], Hop: ['Hop', 'Idle'] }
 const anim = (p, name) => (ANIM_FALLBACK[name] || [name, 'Idle']).find((n) => has(p, n)) || 'Idle'
 
 // the fight at time t: HP of both sides and a callout over whoever just got hit
@@ -435,7 +436,9 @@ async function loadPack($, sprite) {
   const key = mode + ':' + sprite
   if (!sprite || packs[key] || loading.has(key)) return
   loading.add(key)
-  const path = { png: '/api/pack/' + sprite, svg: '/api/pack/' + sprite + '?fmt=svg', cells: '/api/cells/' + sprite }[mode]
+  // ?v= bumps with the pack's contents: the CDN caches packs for a week
+  const path = { png: '/api/pack/' + sprite + '?v=' + PACK_V, svg: '/api/pack/' + sprite + '?fmt=svg&v=' + PACK_V,
+                 cells: '/api/cells/' + sprite }[mode]
   try {
     const r = await $.http.fetch(base + path)
     if (r.ok) packs[key] = JSON.parse(r.text)

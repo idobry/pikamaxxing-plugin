@@ -40,6 +40,10 @@ const LOG = (bName = 'Onix', bSprite = '0095') => ({ v: 1, seed: 5, winner: 'a',
 const DOT = '<path fill="#ff0000" d="M0 0h1v1h-1z"/>'
 const SVGPACK = { box: PACK.box, anims: { Idle: { ms: [100], down: [DOT] }, Walk: { ms: [100], down: [DOT], right: [DOT], left: [DOT] } } }
 const CELLS = { columns: 2, rows: 1, ms: 300, frames: ['gCUAAAAA/wAAAAABIAAAAAAAAAEAAAAB', 'IAAAAAAAAAEAAAABgCUAAAD/AAAAAAAB'] }
+// /api/fx: per type a projectile (and its mirror) and an impact, 4 frames each
+const FXT = (proj: string, impact: string) => ({ proj: [proj, proj, proj, proj], projL: [WHITE, WHITE, WHITE, WHITE], impact: [impact, impact, impact, impact] })
+const FX = { size: { proj: 16, impact: 24 }, frame_ms: 80, types: { water: FXT(BLUE, GREEN), electric: FXT(RED, WHITE) } }
+const SVGFX = { ...FX, types: { water: { proj: [DOT], projL: [DOT], impact: [DOT, DOT, DOT, DOT] }, electric: { proj: [DOT], projL: [DOT], impact: [DOT] } } }
 const GHOSTTY = { HOME: '/home/test', GHOSTTY_RESOURCES_DIR: '/Applications/Ghostty' }
 
 type Opts = { env?: Record<string, string>, linked?: boolean, store?: Record<string, unknown>,
@@ -91,6 +95,7 @@ function stubs(on: any, o: Opts = {}) {
       return reply(200, { log: url.includes('wild:') ? LOG('Koffing', '0109') : LOG() })
     }
     if (url.includes('/api/version')) return reply(200, { plugin: o.plugin || '2.0.0' })
+    if (url.includes('/api/fx')) return reply(200, url.includes('fmt=svg') ? SVGFX : FX)
     if (url.includes('fmt=svg')) return reply(200, SVGPACK)
     if (url.includes('/api/pack/')) return reply(200, PACK)
     return reply(200, CELLS)
@@ -298,11 +303,24 @@ test('a server-decided fight plays from its log: the hit lands, HP drops, a call
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await ui.find({ key: 'pika' }) as any).props.source.png).toBe(GREEN) // this session's pokemon flinches (Hurt)
   expect(await ui.find({ key: 'hp-mine' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '17' })).toBeDefined()  // HP after the hit
   expect(await ui.find({ type: 'Text', text: /^vs Onix/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '-10' })).toBeDefined() // damage callout
   expect(await ui.find({ type: 'Text', text: 'Onix used Surf!' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '💧💧' })).toBeDefined() // impact burst
+  expect((await ui.find({ key: 'burst' }) as any).props.source.png).toBe(GREEN) // the water impact sprite
+  const draining = []
+  for (let n = 17; n <= 27; n++) if (await ui.find({ type: 'Text', text: String(n) })) draining.push(n)
+  expect(draining.length).toBe(1) // one HP figure on the bar...
+  expect(draining[0]).toBeGreaterThan(17) // ...still draining from 27 to 17
+  expect(draining[0]).toBeLessThan(27)
+  await ui.unmount()
+})
+
+test('without pixel graphics the move is a glyph', async ($, on) => {
+  const { clock } = stubs(on, { env: { HOME: '/home/test' }, store: battleAt(3400) })
+  await start($)
+  await clock.advance(300)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: '💧' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -312,12 +330,13 @@ const battleAt = (ago: number) => {
            battle: { start: now - ago, seed: 5, a: 'sess-A', b: 'sess-B', log: LOG(), manual: true } }
 }
 
-test("the move's type flies across: Surf sends water", async ($, on) => {
+test("the move's type flies across: Surf sends its water sprite", async ($, on) => {
   const { clock } = stubs(on, { store: battleAt(3400) }) // first move, mid-flight
   await start($)
   await clock.advance(300)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await ui.find({ type: 'Text', text: '💧' })).toBeDefined()
+  // b attacks a, so the sprite flies left: the mirrored frames
+  expect((await ui.find({ key: 'fx' }) as any).props.source.png).toBe(WHITE)
   await ui.unmount()
 })
 
@@ -327,19 +346,24 @@ test('the loser faints and the winner celebrates', async ($, on) => {
   await clock.advance(300)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: 'Pikachu wins!' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '17' })).toBeDefined()  // HP after both hits
   expect(await ui.find({ type: 'Text', text: /✨/ })).toBeDefined()   // winner sparkles
   expect(await ui.find({ type: 'Text', text: '💫' })).toBeDefined()   // loser dizzy
   await ui.unmount()
 })
 
-test('the desktop card draws the move effect and the battle message', async ($, on) => {
+test('the desktop card draws the whole fight once, as one self-running SVG', async ($, on) => {
   const { clock } = stubs(on, { env: { HOME: '/home/test' }, store: battleAt(3400) })
   await $.session.start({ surface: 'desktop', isInteractive: true, cwd: '/work' })
   await clock.advance(300)
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
   const src = (await ui.find({ type: 'Svg' }) as any).props.source
   expect(src).toContain('Onix used Surf!')
-  expect(src).toContain('animateTransform') // the water drop glides to its target
+  expect(src).toContain('Pikachu wins!')
+  expect(src).toContain('CRIT -30!')
+  expect(src).toMatch(/begin="-3\d{3}ms"/) // the timeline started when the fight did, not at this drawing
+  expect(src).toContain('viewBox="0 0 24 24"') // an impact sprite
+  expect(src.length).toBeLessThan(131072)
   await ui.unmount()
 })
 

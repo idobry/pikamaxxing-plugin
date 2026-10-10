@@ -29,8 +29,10 @@ the Claude desktop app, and earns from every turn you run.
   it evolves on screen when it levels up.
 - **Real battles:** every pokemon has stats (level from tokens, a grade from
   S to F, type and moves). Fights are decided by those stats plus luck: your
-  sessions spar with each other, a lone session meets wild pokemon, and the
-  band shows every move, hit, miss and HP bar.
+  sessions spar with each other, a lone session meets wild pokemon. Each type
+  has its own pixel-art move (Thunderbolt bolts, Flamethrower fireballs), with
+  impact bursts, damage numbers, draining HP bars, a fainting loser and a
+  celebrating winner.
 - **Parallel sessions share one scene:** each Claude session brings the next
   pokemon from your team, and they charge up together when all are thinking.
 - **Controls:** switch pokemon (‹ ›), poke it, stop it, minimize the band, or

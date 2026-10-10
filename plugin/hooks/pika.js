@@ -5,9 +5,9 @@
 // Every session's pokemon shares one scene, so parallel agents battle when
 // idle and charge together when busy, and a pokemon that levels up evolves
 // on screen. Terminal (kitty graphics or colored cells) and desktop app (SVG).
-const VERSION = '2.2.0'
+const VERSION = '2.3.0'
 const FALLBACK = 'https://pikamaxxing.vercel.app'
-const TICK = 100         // ms per engine step; the terminal band redraws at most 10/s
+const TICK = 50          // ms per engine step; the terminal band redraws at most 20/s
 const SLEEP_MS = 300000  // quiet this long -> nap
 const LIVE_MS = 15000    // a session not heard from this long has left the scene
 const BEAT_MS = 5000     // presence heartbeat
@@ -71,7 +71,7 @@ let legacy = false        // the old desktop app's Stop hook still reports; don'
 let pending = 0           // tokens earned and not yet credited
 let updateHint = ''
 
-const SVG_H = 56, SVG_SPEED = 6, GAUGE_W = 14
+const SVG_H = 56, SVG_SPEED = 3, GAUGE_W = 14 // SVG_SPEED: px per tick
 // the PikaMaxxing logo, 14x12 pixel art: PNG for the terminal, paths for the desktop card
 const LOGO_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAHAAAABgCAYAAADFNvbQAAABM0lEQVR42u3cUQ3CMBRA0ZXghfAzBwhAAQbwgAY8YAAFE4CD/hDUgIM18Ea7wTnfBMJu+pKXJU2Xff/sAo5DTh0fiz7/lUe4bAIKiIAIKCACUl96nA6je8gt30M/8O97YnTP2/VbJ9AIRUAEREABEZBJ98DSB+yJbfe8zfmanEAjFAEREAEFREAmtI5+QWmPKRryoh9g+P87gUYoAiIgAgqIgNQVfhdXel/IuNL7PifQCEVABERAARGQ2nugPW/ee6ITaIQiIAIKiIAIyLt7oD3PCURABBQQAREQAQVEQAREQAEREAER8GcV74mJ3gfa+h6V1r79/JxAIxQBEVBABERABBQQAREQAQVEQARkhHtiZs49MUYoAiIgAgqIgNTeA+2Jbfc8J9AIRUAEREABEZCJvQBa9TbM3y6NugAAAABJRU5ErkJggg=='
 const LOGO_SVG = '<path fill="#9c492e" d="M0 0h2v1h-2zM12 0h2v1h-2zM1 1h2v1h-2zM11 1h2v1h-2zM2 2h2v1h-2zM10 2h2v1h-2zM1 8h2v1h-2zM11 8h2v1h-2zM1 9h2v1h-2zM11 9h2v1h-2z"/><path fill="#d97757" d="M0 1h1v1h-1zM13 1h1v1h-1zM1 2h1v1h-1zM12 2h1v1h-1zM1 3h3v1h-3zM10 3h3v1h-3zM2 4h10v1h-10zM1 5h12v1h-12zM0 6h14v1h-14zM0 7h14v1h-14zM0 8h1v1h-1zM3 8h8v1h-8zM13 8h1v1h-1zM0 9h1v1h-1zM3 9h8v1h-8zM13 9h1v1h-1zM1 10h12v1h-12zM2 11h10v1h-10z"/>'
@@ -208,7 +208,7 @@ function geo(p, i = 0, n = 1) {
   } else {
     w = compact ? miniCols(p) : b.columns
     stage = Math.max(w, compact ? cols - 3 : cols - LEFT_W - RIGHT_W - 1)
-    speed = 1
+    speed = 0.5 // columns per tick; drawn at the nearest column
   }
   let lo = 0, hi = Math.max(0, stage - w)
   if (n > 1) {
@@ -245,6 +245,7 @@ function frameList(p) {
 // Battle: decided on the server (stats, types, luck) and played here from its
 // log on wall-clock time, so every session's band shows the same fight.
 const B_APPROACH = 3000, B_MOVE = 1500, B_FIRE = 200, B_IMPACT = 650, B_KO = 3200, B_RETREAT = 2000
+const B_DRAIN = 400, FX_MS = 80 // HP bars drain over this long; effect sprites change frame this often
 const moveEvents = (b) => b.log.events.filter((e) => e.t === 'move')
 const battleLen = (b) => B_APPROACH + moveEvents(b).length * B_MOVE + B_KO + B_RETREAT
 // not every species has every move: fall back to the nearest one its sheet has
@@ -252,27 +253,26 @@ const ANIM_FALLBACK = { Pose: ['Pose', 'Hop', 'Idle'], Tumble: ['Tumble', 'Sleep
                    Shoot: ['Shoot', 'Attack', 'Idle'], Swing: ['Swing', 'Attack', 'Idle'], Double: ['Double', 'Attack', 'Idle'],
                    Strike: ['Strike', 'Attack', 'Idle'], Attack: ['Attack', 'Idle'], Hurt: ['Hurt', 'Idle'], Hop: ['Hop', 'Idle'] }
 const anim = (p, name) => (ANIM_FALLBACK[name] || [name, 'Idle']).find((n) => has(p, n)) || 'Idle'
-// what each type's move looks like: [terminal glyph, terminal colour, desktop colour, desktop shape]
+// a move's glyph and colour where the terminal has no pixel graphics; elsewhere
+// each type has pixel-art sprites from /api/fx
 const TYPE_FX = {
-  electric: ['⚡', 'yellow', '#facc15', 'bolt'], fire: ['🔥', 'red', '#f97316', 'flame'], water: ['💧', 'blue', '#38bdf8', 'drop'],
-  grass: ['🍃', 'green', '#22c55e', 'leaf'], ice: ['❄', 'cyan', '#a5f3fc', 'star'], psychic: ['✺', 'magenta', '#e879f9', 'ring'],
-  ghost: ['👻', 'magenta', '#a855f7', 'ring'], poison: ['☠', 'magenta', '#a855f7', 'drop'], ground: ['▲', 'yellow', '#b45309', 'rock'],
-  rock: ['◆', 'white', '#a8a29e', 'rock'], fighting: ['👊', 'red', '#ef4444', 'star'], normal: ['✦', 'white', '#e5e7eb', 'star'],
-  flying: ['〰', 'cyan', '#7dd3fc', 'leaf'], bug: ['✂', 'green', '#84cc16', 'star'], dragon: ['✹', 'blue', '#818cf8', 'flame'],
-  fairy: ['✿', 'magenta', '#f9a8d4', 'star'], steel: ['⚙', 'white', '#94a3b8', 'rock'], dark: ['◐', 'gray', '#6b7280', 'ring'],
-  shell: ['$', 'green', '#22c55e', 'star'], script: ['λ', 'yellow', '#eab308', 'bolt'], net: ['⇄', 'cyan', '#06b6d4', 'ring'],
+  electric: ['⚡', 'yellow'], fire: ['🔥', 'red'], water: ['💧', 'blue'], grass: ['🍃', 'green'], ice: ['❄', 'cyan'],
+  psychic: ['✺', 'magenta'], ghost: ['👻', 'magenta'], poison: ['☠', 'magenta'], ground: ['▲', 'yellow'], rock: ['◆', 'white'],
+  fighting: ['👊', 'red'], normal: ['✦', 'white'], flying: ['〰', 'cyan'], bug: ['✂', 'green'], dragon: ['✹', 'blue'],
+  fairy: ['✿', 'magenta'], steel: ['⚙', 'white'], dark: ['◐', 'gray'], shell: ['$', 'green'], script: ['λ', 'yellow'], net: ['⇄', 'cyan'],
 }
 const fxOf = (type) => TYPE_FX[type] || TYPE_FX.normal
 
-// the fight at time t: HP, the message line, the move in flight, and callouts
+// the fight at time t: HP (draining after each hit), the message line, the move
+// in flight, and callouts
 function battleNow(t = Date.now() - (battle?.start || 0)) {
   if (!battle) return null
   const evs = moveEvents(battle), L = battle.log, name = (side) => L[side].name
   const winSide = L.winner, loseSide = winSide === 'a' ? 'b' : 'a', koAt = B_APPROACH + evs.length * B_MOVE
   let hp = [L.a.hp, L.b.hp], callout = null, msg = '', move = null, phase = 'approach'
   evs.forEach((e, j) => {
-    const at = B_APPROACH + j * B_MOVE + B_IMPACT
-    if (t >= at) hp = e.hp
+    const at = B_APPROACH + j * B_MOVE + B_IMPACT, k = Math.min(1, (t - at) / B_DRAIN)
+    if (k > 0) hp = hp.map((h, i) => Math.round(h + (e.hp[i] - h) * k))
     if (t >= at && t < at + 700) {
       const text = !e.hit ? 'miss' : e.eff === 0 ? 'no effect' : (e.crit ? 'CRIT -' : '-') + e.dmg + (e.eff >= 2 ? '!' : '')
       callout = { who: e.who === 'a' ? 'b' : 'a', text, kind: !e.hit || e.eff === 0 ? 'miss' : e.crit || e.eff >= 2 ? 'big' : 'hit' }
@@ -285,10 +285,10 @@ function battleNow(t = Date.now() - (battle?.start || 0)) {
     const i = Math.floor((t - B_APPROACH) / B_MOVE), e = evs[i], u = t - B_APPROACH - i * B_MOVE
     move = { e, u, att: e.who, def: e.who === 'a' ? 'b' : 'a', fx: fxOf(e.type),
              flight: u >= B_FIRE && u < B_IMPACT ? (u - B_FIRE) / (B_IMPACT - B_FIRE) : null,
-             burst: e.hit && e.eff > 0 && u >= B_IMPACT && u < B_IMPACT + 350 }
+             burst: e.hit && e.eff > 0 && u >= B_IMPACT && u < B_IMPACT + 4 * FX_MS }
     const after = !e.hit ? 'It missed!' : e.eff === 0 ? 'It had no effect…' : e.crit ? 'A critical hit!'
       : e.eff >= 2 ? "It's super effective!" : e.eff < 1 ? "It's not very effective…" : ''
-    msg = name(e.who) + ' used ' + e.move + '!' + (u >= B_IMPACT && after ? ' ' + after : '')
+    msg = u >= B_IMPACT && after ? after : name(e.who) + ' used ' + e.move + '!'
   } else {
     phase = t < koAt + B_KO ? 'ko' : 'retreat'
     msg = t < koAt + 1300 ? name(loseSide) + ' fainted!' : name(winSide) + ' wins!'
@@ -297,45 +297,69 @@ function battleNow(t = Date.now() - (battle?.start || 0)) {
            win: winSide, lose: loseSide, joy: phase !== 'approach' && phase !== 'move' }
 }
 
-function battleStep(sp) {
-  const a = pets.get(battle.a), b = pets.get(battle.b)
-  const t = Date.now() - battle.start, total = battleLen(battle)
-  if (!a || !b || t > total || (!battle.manual && (!resting(a) || !resting(b)))) return false
-  if (t < 0) return true
-  const n = sp.length, ga = geo(a, sp.indexOf(a), n), gb = geo(b, sp.indexOf(b), n)
-  const mid = Math.round(ga.stage / 2), L = mid - ga.w - 1, R = mid + 1
-  const walkTo = (p, g, tx) => {
-    if (p.x === null) p.x = tx
-    if (Math.abs(tx - p.x) <= g.speed) { p.x = tx; return true }
-    p.x += tx > p.x ? g.speed : -g.speed
-    return false
+// the two fighters, their stage geometry, and where each stood when the fight began
+function battleSetup(sp) {
+  const A = pets.get(battle.a), B = pets.get(battle.b)
+  if (!A || !B) return null
+  const n = sp.length, ga = geo(A, sp.indexOf(A), n), gb = geo(B, sp.indexOf(B), n)
+  if (battle.x0?.mode !== mode + compact) {
+    battle.x0 = { mode: mode + compact, a: Math.min(A.x ?? ga.lo, ga.stage - ga.w), b: Math.min(B.x ?? gb.hi, gb.stage - gb.w) }
   }
+  return { A, B, ga, gb, x0: battle.x0 }
+}
+
+// Where each fighter stands and what it plays at fight time t. A pure function
+// of the log, so the terminal steps it every tick and the desktop compiles the
+// whole fight from it into one drawing; both show the same fight.
+function battlePose(t, { A, B, ga, gb, x0 }) {
+  const P = { a: A, b: B }, g = { a: ga, b: gb }, mid = Math.round(ga.stage / 2), spot = { a: mid - ga.w - 1, b: mid + 1 }
   const evs = moveEvents(battle), koAt = B_APPROACH + evs.length * B_MOVE
-  const win = battle.log.winner === 'a' ? a : b, lose = win === a ? b : a
-  const fw = win === a ? 1 : -1, fl = lose === a ? 1 : -1
-  if (t < B_APPROACH) { // walk in to meet in the middle
-    a.ov = walkTo(a, ga, L) ? { name: 'Idle', face: 1 } : { name: 'Walk', face: L >= a.x ? 1 : -1 }
-    b.ov = walkTo(b, gb, R) ? { name: 'Idle', face: -1 } : { name: 'Walk', face: R >= b.x ? 1 : -1 }
-  } else if (t < koAt) { // one move per event: wind up, the move flies, the hit (or the dodge) lands
-    const i = Math.floor((t - B_APPROACH) / B_MOVE), e = evs[i], u = t - B_APPROACH - i * B_MOVE
-    const att = e.who === 'a' ? a : b, def = att === a ? b : a
-    const fa = att === a ? 1 : -1
-    att.ov = { name: anim(att, e.anim), face: fa }
-    if (u < B_IMPACT) def.ov = { name: 'Idle', face: -fa }
-    else if (e.hit && e.eff > 0) def.ov = { name: u < B_IMPACT + 550 ? anim(def, 'Hurt') : 'Idle', face: -fa, flash: u < B_IMPACT + 150 }
-    else def.ov = { name: anim(def, 'Hop'), face: -fa }
-  } else if (t < koAt + B_KO) { // the loser reels and collapses; the winner celebrates
-    const k = t - koAt
-    lose.ov = k < 500 ? { name: anim(lose, 'Hurt'), face: fl } : { name: anim(lose, k < 1300 ? 'Tumble' : 'Faint'), face: fl, fainted: k >= 500 }
-    win.ov = { name: anim(win, k < 1300 ? 'Pose' : 'Hop'), face: fw, happy: true }
-  } else { // the winner walks home happy; the loser stays down (a wild one limps off)
-    const gw = win === a ? ga : gb, home = win.sid === 'wild' ? gw.stage : Math.round((gw.lo + gw.hi) / 2)
-    win.ov = walkTo(win, gw, home) ? { name: anim(win, 'Hop'), face: 1, happy: true } : { name: 'Walk', face: home >= win.x ? 1 : -1, happy: true }
-    if (lose.sid === 'wild') {
-      const gl = lose === a ? ga : gb
-      lose.ov = walkTo(lose, gl, gl.stage) ? { name: 'Idle', face: 1 } : { name: 'Walk', face: 1 }
-    } else lose.ov = { name: anim(lose, 'Faint'), face: fl, fainted: true }
+  const win = battle.log.winner, lose = win === 'a' ? 'b' : 'a'
+  const jolt = mode === 'svg' ? 3 : 1 // how far a hit shakes, a lunge reaches: px or columns
+  // walking pace, faster when it must be to arrive in time
+  const walk = (s, from, to, ms, within, arrived) => {
+    const d = to - from, pace = Math.max(g[s].speed / TICK, Math.abs(d) / within), went = Math.max(0, ms) * pace
+    return went >= Math.abs(d) ? { x: to, ov: arrived } : { x: from + Math.sign(d) * went, ov: { name: 'Walk', face: Math.sign(d) } }
   }
+  const out = {}
+  for (const s of ['a', 'b']) {
+    const p = P[s], f = s === 'a' ? 1 : -1, home = spot[s]
+    if (t < B_APPROACH) { // walk in to meet in the middle
+      out[s] = walk(s, x0[s], home, t, B_APPROACH - 400, { name: 'Idle', face: f })
+    } else if (t < koAt) { // one move per event: wind up, the move flies, the hit (or the dodge) lands
+      const i = Math.floor((t - B_APPROACH) / B_MOVE), e = evs[i], u = t - B_APPROACH - i * B_MOVE
+      if (e.who === s) { // a physical move lunges at the foe
+        const reach = e.anim === 'Strike' || e.anim === 'Swing' ? Math.sin(Math.PI * Math.min(1, Math.max(0, (u - 100) / B_IMPACT))) : 0
+        out[s] = { x: home + f * reach * jolt * 2, ov: { name: anim(p, e.anim), face: f } }
+      } else if (u < B_IMPACT) out[s] = { x: home, ov: { name: 'Idle', face: f } }
+      else if (e.hit && e.eff > 0) {
+        const shake = u < B_IMPACT + 300 ? (Math.floor(u / 50) % 2 ? jolt : -jolt) : 0
+        out[s] = { x: home + shake, ov: { name: u < B_IMPACT + 550 ? anim(p, 'Hurt') : 'Idle', face: f, flash: u < B_IMPACT + 150 } }
+      } else out[s] = { x: home, ov: { name: anim(p, 'Hop'), face: f } }
+    } else if (t < koAt + B_KO) { // the loser reels and collapses; the winner celebrates
+      const k = t - koAt
+      out[s] = s === lose
+        ? { x: home, ov: k < 500 ? { name: anim(p, 'Hurt'), face: f } : { name: anim(p, k < 1300 ? 'Tumble' : 'Faint'), face: f, fainted: true } }
+        : { x: home, ov: { name: anim(p, k < 1300 ? 'Pose' : 'Hop'), face: f, happy: true } }
+    } else { // the winner walks home happy; the loser stays down (a wild one leaves)
+      const k = t - koAt - B_KO, wild = p.sid === 'wild', edge = g[s].stage
+      if (s === win) {
+        out[s] = walk(s, home, wild ? edge : Math.round((g[s].lo + g[s].hi) / 2), k, B_RETREAT - 300, { name: anim(p, 'Hop'), face: 1 })
+        out[s].ov = { ...out[s].ov, happy: true }
+      } else if (wild) out[s] = walk(s, home, edge, k, B_RETREAT, { name: 'Idle', face: 1 })
+      else out[s] = { x: home, ov: { name: anim(p, 'Faint'), face: f, fainted: true } }
+    }
+  }
+  return out
+}
+
+function battleStep(sp) {
+  const a = pets.get(battle.a), b = pets.get(battle.b), t = Date.now() - battle.start
+  if (!a || !b || t > battleLen(battle) || (!battle.manual && (!resting(a) || !resting(b)))) return false
+  if (t < 0) return true
+  const pose = battlePose(t, battleSetup(sp))
+  Object.assign(a, pose.a)
+  Object.assign(b, pose.b)
   return true
 }
 
@@ -408,6 +432,7 @@ async function startBattle($, manual) {
   if (!r.ok || !r.data?.log) return null
   const log = r.data.log
   if (!spar) { await loadPack($, log.b.sprite); wildVisitor(log.b) }
+  await loadFx($)
   battle = { start: Date.now() + 1500, seed, a: a.sid, b: spar ? b.sid : 'wild', log, manual }
   await $.store.set('battle', battle)
   return log
@@ -442,6 +467,7 @@ async function readOthers($) {
   const b = await $.store.get('battle')
   if (b?.log && (!battle || b.start !== battle.start) && Date.now() - b.start < battleLen(b)) {
     if (b.b === 'wild') { await loadPack($, b.log.b.sprite); wildVisitor(b.log.b) }
+    await loadFx($)
     battle = b
   }
 }
@@ -462,19 +488,22 @@ async function api($, path, body) {
   return { ok: r.ok, status: r.status, data }
 }
 
-async function loadPack($, sprite) {
-  const key = mode + ':' + sprite
-  if (!sprite || packs[key] || loading.has(key)) return
+async function fetchOnce($, key, path) {
+  if (packs[key] || loading.has(key)) return
   loading.add(key)
-  // ?v= bumps with the pack's contents: the CDN caches packs for a week
-  const path = { png: '/api/pack/' + sprite + '?v=' + PACK_V, svg: '/api/pack/' + sprite + '?fmt=svg&v=' + PACK_V,
-                 cells: '/api/cells/' + sprite }[mode]
   try {
     const r = await $.http.fetch(base + path)
     if (r.ok) packs[key] = JSON.parse(r.text)
   } catch (e) { /* keep showing what we have */ }
   loading.delete(key)
 }
+
+// ?v= bumps with the pack's contents: the CDN caches packs for a week
+const loadPack = ($, sprite) => sprite ? fetchOnce($, mode + ':' + sprite, { png: '/api/pack/' + sprite + '?v=' + PACK_V,
+  svg: '/api/pack/' + sprite + '?fmt=svg&v=' + PACK_V, cells: '/api/cells/' + sprite }[mode]) : Promise.resolve()
+// the move-effect sprites (pixel art per type); the cells terminal draws glyphs instead
+const loadFx = ($) => mode === 'cells' ? Promise.resolve() : fetchOnce($, mode + ':fx', '/api/fx' + (mode === 'svg' ? '?fmt=svg' : ''))
+const fxArt = (type) => packs[mode + ':fx']?.types?.[type]
 
 // fold fresh pet data in, and start an evolution for any pokemon in the scene
 // whose form changed since we last saw it
@@ -876,6 +905,10 @@ export function register(on) {
       for (const p of sp) loadPack($, spriteOf(p)).then(() => $.ui.invalidate('ui.render'))
       return next(e)
     }
+    if (battle) { // shown on another surface mid-fight: fetch what this mode lacks
+      for (const p of sp) if (!packFor(spriteOf(p))) loadPack($, spriteOf(p))
+      loadFx($)
+    }
 
     if (stopped) {
       return Box({ flexDirection: 'column', children: [
@@ -901,13 +934,15 @@ export function register(on) {
         Box({ key: 'card', flexDirection: 'row', alignItems: 'center', width: '100%', columnGap: 2, children }),
         ...below,
       ] })
+      // an Svg takes at most 131072 chars: a heavy fight redraws on a smaller frame budget
+      const fit = (draw) => { let src = draw(FRAME_BUDGET); for (let b = FRAME_BUDGET / 2; src.length > 131000 && b > 2000; b /= 2) src = draw(b); return src }
       if (compact) {
-        return row([Svg({ alt: name, width: STRIP_W, height: STRIP_H, source: strip(sp) }),
+        return row([Svg({ alt: name, width: STRIP_W, height: STRIP_H, source: fit((b) => strip(sp, b)) }),
                     Box({ flexGrow: 1 }), corner])
       }
       return row([
         Svg({ alt: name + ', ' + phaseLabel(own) + ', ' + pct + '% to next level',
-              width: CARD_W, height: CARD_H, source: card(pet, name, pct, sp, own) }),
+              width: CARD_W, height: CARD_H, source: fit((b) => card(pet, name, pct, sp, own, b)) }),
         Box({ flexGrow: 1 }),
         Box({ flexDirection: 'column', rowGap: 1, children: [
           Box({ flexDirection: 'row', columnGap: 1, children: [
@@ -943,7 +978,7 @@ export function register(on) {
     const bn = battle && Date.now() >= battle.start ? battleNow() : null
     const mineIdx = bn ? (battle.a === mySid ? 0 : battle.b === mySid ? 1 : 0) : 0
     const hpBar = (key, i, w) => {
-      const f = Math.round(w * bn.hp[i] / Math.max(1, bn.max[i])), r = bn.hp[i] / Math.max(1, bn.max[i])
+      const r = Math.max(0, Math.min(1, bn.hp[i] / Math.max(1, bn.max[i]))), f = Math.round(w * r)
       return Box({ key, flexDirection: 'row', children: [
         Text({ color: r > 0.5 ? 'green' : r > 0.2 ? 'yellow' : 'red', children: ['━'.repeat(f)] }),
         Text({ dimColor: true, children: ['─'.repeat(w - f) + ' '] }),
@@ -954,13 +989,21 @@ export function register(on) {
     const at = (p, row, key, text, props = {}) => sprites.push(Box({ position: 'absolute', left: Math.max(0, Math.round(p.x || 0)), top: row,
       children: [Text({ key, bold: true, children: [text], ...props })] }))
     if (bn?.move) { // the move flies from attacker to defender, then bursts on the target
-      const { fx, att, def, flight, burst } = bn.move, A = sideOf(att), D = sideOf(def)
+      const { e, u, fx, att, def, flight, burst } = bn.move, A = sideOf(att), D = sideOf(def)
+      const art = mode === 'png' && !compact && fxArt(e.type), mid = Math.max(0, Math.floor(H / 2) - 1)
       if (A && D && flight !== null) {
-        const from = (A.x || 0) + (att === 'a' ? boxOf(A).columns : 0), to = (D.x || 0) + (def === 'a' ? boxOf(D).columns - 2 : 0)
-        sprites.push(Box({ position: 'absolute', left: Math.max(0, Math.round(from + (to - from) * flight)), top: 1,
-          children: [Text({ key: 'fx', bold: true, color: fx[1], children: [fx[0]] })] }))
+        const cw = (p) => compact ? miniCols(p) : boxOf(p).columns
+        const from = (A.x || 0) + (att === 'a' ? cw(A) : 0), to = (D.x || 0) + (def === 'a' ? cw(D) - 4 : 0)
+        sprites.push(Box({ position: 'absolute', left: Math.max(0, Math.round(from + (to - from) * flight)), top: mid, children: [art
+          ? Image({ key: 'fx', source: { png: ((fr) => fr[Math.floor(u / FX_MS) % fr.length])(art[att === 'a' ? 'proj' : 'projL']) }, columns: 4, rows: 2, alt: ' ' })
+          : Text({ key: 'fx', bold: true, color: fx[1], children: [fx[0]] })] }))
       }
-      if (D && burst) at(D, 1, 'burst', fx[0] + fx[0], { color: fx[1] })
+      if (D && burst && art) {
+        const rows = boxOf(D).rows
+        sprites.push(Box({ position: 'absolute', left: Math.max(0, Math.round((D.x || 0) + boxOf(D).columns / 2 - 2)),
+          top: Math.max(0, H - Math.round(rows / 2) - 1), children: [
+            Image({ key: 'burst', source: { png: art.impact[Math.min(art.impact.length - 1, Math.floor((u - B_IMPACT) / FX_MS))] }, columns: 4, rows: 2, alt: ' ' })] }))
+      } else if (D && burst) at(D, mid, 'burst', fx[0] + fx[0], { color: fx[1] })
     }
     if (bn?.joy) { // sparkles for the winner, dizzy for the one that fainted
       const W = sideOf(bn.win), Lz = sideOf(bn.lose)
@@ -1041,24 +1084,30 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
 function phaseLabel(p) {
   if (p.evo) return 'evolving!'
-  if (battle && (battle.a === p.sid || battle.b === p.sid) && Date.now() >= battle.start) {
-    const now = battleNow(), mine = battle.a === p.sid ? 0 : 1
-    return 'HP ' + now.hp[mine] + '/' + now.max[mine] + ' vs ' + now.hp[1 - mine] + '/' + now.max[1 - mine]
-  }
+  if (fighting(p)) return 'fighting ' + battle.log[battle.a === p.sid ? 'b' : 'a'].name + '!'
   if (resting(p) && quiet(p) > SLEEP_MS) return 'napping'
   if (p.phase === 'tool') return 'using ' + (p.tool || 'a tool')
   return { think: 'thinking…', done: 'done!', alert: 'needs you', idle: 'hanging out' }[p.phase] || 'hanging out'
 }
 
+const fighting = (p) => Boolean(battle && Date.now() >= battle.start && (battle.a === p.sid || battle.b === p.sid))
+
 // what the desktop drawing shows; a change here is the only thing that redraws
-// it, except during ceremonies (battle, evolution), redrawn 5x a second. The Svg
+// it, except during an evolution, redrawn 5x a second. A fight is drawn once,
+// whole (battleSvg). The Svg
 // is drawn as an image, not an interactive frame: SMIL still runs in an image,
 // and swapping an image keeps the old picture until the new one is ready,
 // where a frame repaints blank on every redraw (the flicker).
 function scene() {
   const sp = scenePets()
+  const head = [compact, team.length, me()?.slot, petOf(me() || {})?.exp_pct]
+  if (battle && Date.now() >= battle.start) {
+    const ready = [battle.a, battle.b].every((sid) => pets.has(sid) && packFor(spriteOf(pets.get(sid))))
+    return [...head, 'fight', battle.start, Boolean(packs['svg:fx']), ready,
+            ...sp.filter((p) => !fighting(p)).map((p) => [p.sid, p.slot, p.show, p.dir, phaseLabel(p)].join(':'))].join('|')
+  }
   const busy = sp.some((p) => p.ov)
-  return [compact, team.length, me()?.slot, petOf(me() || {})?.exp_pct, busy ? Math.floor(Date.now() / 200) : '',
+  return [...head, busy ? Math.floor(Date.now() / 200) : '',
           ...sp.map((p) => [p.sid, p.slot, p.show, p.dir, phaseLabel(p)].join(':'))].join('|')
 }
 
@@ -1068,31 +1117,44 @@ const FRAME_BUDGET = 100000 // chars of frame markup per drawing; an Svg takes a
 // <defs> (sheets repeat frames), each shown in turn by a discrete SMIL
 // animation at its PMD timing, gliding to its roam edge while it walks.
 // Too heavy (Moltres' Double) -> every other frame, durations merged.
-function animSprite(p, i, n, left, ground, h, budget) {
-  const k = packFor(spriteOf(p))
-  if (!k) return ''
-  let { ms, imgs } = frameList(p)
-  if (!imgs.length) return ''
-  while (imgs.length > 1 && [...new Set(imgs)].reduce((s, f) => s + f.length, 0) > budget) {
-    ms = ms.filter((_, j) => j % 2 === 0).map((d, j) => d + (ms[2 * j + 1] || 0))
-    imgs = imgs.filter((_, j) => j % 2 === 0)
-  }
-  const b = k.box, tag = 'p' + (++drawSeq).toString(36) + 'f', ids = new Map()
-  const defs = imgs.map((f) => {
+const halve = ({ ms, imgs }) => ({ ms: ms.filter((_, j) => j % 2 === 0).map((d, j) => d + (ms[2 * j + 1] || 0)),
+                                   imgs: imgs.filter((_, j) => j % 2 === 0) })
+const bytes = (frames) => [...new Set(frames)].reduce((s, f) => s + f.length, 0)
+
+// each distinct frame once in <defs>, under ids starting with tag
+function frameDefs(frames, tag) {
+  const ids = new Map()
+  const defs = frames.map((f) => {
     if (ids.has(f)) return ''
     ids.set(f, tag + ids.size)
     return `<g id="${ids.get(f)}">${f}</g>`
   }).join('')
+  return { ids, defs }
+}
+
+// <use>s that show the frames in turn, forever
+function cycle(refs, ms) {
   const total = ms.reduce((a, d) => a + d, 0)
   let t = 0
-  const uses = imgs.map((f, j) => {
+  return refs.map((id, j) => {
     const a = t / total, z = (t + ms[j]) / total
     t += ms[j]
-    const values = imgs.length === 1 ? 'visible' : j === 0 ? 'visible;hidden' : z >= 1 ? 'hidden;visible' : 'hidden;visible;hidden'
-    const times = imgs.length === 1 ? '0' : j === 0 ? `0;${z.toFixed(4)}` : z >= 1 ? `0;${a.toFixed(4)}` : `0;${a.toFixed(4)};${z.toFixed(4)}`
-    return `<use href="#${ids.get(f)}" visibility="hidden"><animate attributeName="visibility" values="${values}" `
+    const values = refs.length === 1 ? 'visible' : j === 0 ? 'visible;hidden' : z >= 1 ? 'hidden;visible' : 'hidden;visible;hidden'
+    const times = refs.length === 1 ? '0' : j === 0 ? `0;${z.toFixed(4)}` : z >= 1 ? `0;${a.toFixed(4)}` : `0;${a.toFixed(4)};${z.toFixed(4)}`
+    return `<use href="#${id}" visibility="hidden"><animate attributeName="visibility" values="${values}" `
          + `keyTimes="${times}" dur="${total}ms" calcMode="discrete" repeatCount="indefinite"/></use>`
   }).join('')
+}
+
+function animSprite(p, i, n, left, ground, h, budget) {
+  const k = packFor(spriteOf(p))
+  if (!k) return ''
+  let f = frameList(p)
+  if (!f.imgs.length) return ''
+  while (f.imgs.length > 1 && bytes(f.imgs) > budget) f = halve(f)
+  const { ms, imgs } = f
+  const b = k.box, tag = 'p' + (++drawSeq).toString(36) + 'f', { ids, defs } = frameDefs(imgs, tag)
+  const uses = cycle(imgs.map((f) => ids.get(f)), ms)
   const sw = Math.round(h * b.w / b.h), x0 = left + (p.x || 0)
   let glide = ''
   if (p.show === 'Walk' && !p.ov) { // same speed the engine moves at, so its x and the picture agree
@@ -1109,73 +1171,170 @@ function animSprite(p, i, n, left, ground, h, budget) {
     + `${white ? ` filter="url(#${tag}w)"` : ''}>${uses}</svg></g>`
 }
 
-const sprites = (sp, left, ground, h) => sp.map((p, i) => animSprite(p, i, sp.length, left, ground, h,
-                                                                    FRAME_BUDGET / sp.length)).join('')
+// everyone in the scene except the two fighters while a fight is drawn whole
+const sprites = (sp, left, ground, h, budget, drawn) => sp.map((p, i) => drawn && fighting(p) ? ''
+  : animSprite(p, i, sp.length, left, ground, h, budget / sp.length)).join('')
 
-function strip(sp) {
+function strip(sp, budget = FRAME_BUDGET) {
   const ground = STRIP_H - 4
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${STRIP_W}" height="${STRIP_H}" viewBox="0 0 ${STRIP_W} ${STRIP_H}">`
     + `<line x1="4" y1="${ground}" x2="${STRIP_W - 4}" y2="${ground}" stroke="${C.ground}" stroke-opacity=".35" stroke-width="1.5" stroke-linecap="round"/>`
-    + sprites(sp, 8, ground, STRIP_SPR)
+    + fightAnd(sp, 8, ground, STRIP_SPR, '', false, budget)
     + `</svg>`
 }
 
-// a move's look on the desktop card, drawn at (0,0) and moved into place
-function fxShape(kind, c) {
-  const star = (r) => Array.from({ length: 10 }, (_, i) => {
-    const a = Math.PI / 5 * i - Math.PI / 2, q = i % 2 ? r * 0.45 : r
-    return (Math.cos(a) * q).toFixed(1) + ',' + (Math.sin(a) * q).toFixed(1)
-  }).join(' ')
-  return {
-    bolt: `<polyline points="-12,-8 -2,-2 -6,2 6,8 0,0 4,-4" fill="none" stroke="${c}" stroke-width="3" stroke-linejoin="round"/>`,
-    flame: `<circle r="9" fill="${c}" opacity=".9"/><circle r="5" cx="2" fill="#fde047"/>`,
-    drop: `<circle r="7" fill="${c}"/><circle r="3" cx="-9" cy="2" fill="${c}" opacity=".7"/>`,
-    leaf: `<ellipse rx="9" ry="4" fill="${c}" transform="rotate(-25)"/><ellipse rx="6" ry="3" cx="-10" cy="5" fill="${c}" opacity=".7" transform="rotate(20)"/>`,
-    ring: `<circle r="8" fill="none" stroke="${c}" stroke-width="3"/><circle r="3" fill="${c}"/>`,
-    rock: `<polygon points="0,-9 8,0 0,9 -8,0" fill="${c}"/>`,
-    star: `<polygon points="${star(9)}" fill="${c}"/>`,
-  }[kind] || `<polygon points="${star(9)}" fill="${c}"/>`
+// the fight (if any) drawn whole, and everyone else; without a fight they get the whole budget
+function fightAnd(sp, left, ground, h, font, hud, budget) {
+  const f = budget > 6000 ? battleSvg(sp, left, ground, h, font, hud, budget * 0.75) : ''
+  return f + sprites(sp, left, ground, h, f ? budget * 0.25 : budget, Boolean(f))
 }
 
-// the battle layer over the stage: message, the move in flight, the impact,
-// sparkles for the winner. Each redraw restarts SMIL at 0, so the projectile
-// glides from where it is now to the target over the time that is left.
-function battleFx(sp, left, ground, h, font) {
-  const bn = battle && Date.now() >= battle.start ? battleNow() : null
-  if (!bn) return ''
-  const posOf = (side) => {
-    const p = pets.get(side === 'a' ? battle.a : battle.b)
-    if (!p || !packFor(spriteOf(p))) return null
-    const b = boxOf(p), sw = Math.round(h * b.w / b.h)
-    return { x: left + (p.x || 0) + sw / 2, y: ground - h * 0.45, top: ground - h }
-  }
-  let out = `<text x="${left}" y="20" ${font} font-size="12" font-weight="700" fill="#f5f5f5">${esc(bn.msg)}</text>`
-  if (bn.move) {
-    const { fx, att, def, flight, burst, u } = bn.move, A = posOf(att), D = posOf(def)
-    if (A && D && flight !== null) {
-      const x = A.x + (D.x - A.x) * flight, y = A.y + (D.y - A.y) * flight, left_ms = Math.max(1, B_IMPACT - u)
-      out += `<g transform="translate(${x.toFixed(1)} ${y.toFixed(1)})"><animateTransform attributeName="transform" type="translate" `
-           + `from="${x.toFixed(1)} ${y.toFixed(1)}" to="${D.x.toFixed(1)} ${D.y.toFixed(1)}" dur="${left_ms}ms" fill="freeze"/>`
-           + fxShape(fx[3], fx[2]) + `</g>`
+const B_STEP = 25 // ms between the samples a fight is compiled from
+// [frame halvings, simplification] from richest to plainest; see framesOf
+const LOD = [[0, 0], [1, 0], [1, 1], [2, 1], [2, 2], [3, 2], [4, 3], [8, 3]]
+const DEGRADE = { Pose: 'Idle', Hop: 'Idle', Walk: 'Idle', Tumble: 'Hurt', Sleep: 'Hurt', Shoot: 'Attack', Swing: 'Attack', Strike: 'Attack' }
+const HALO = 'stroke="#1c1c1c" stroke-opacity=".6" stroke-width="3" stroke-linejoin="round" paint-order="stroke"'
+const MATRIX = { normal: '1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 1 0', gray: '.3 .59 .11 0 0 .3 .59 .11 0 0 .3 .59 .11 0 0 0 0 0 1 0',
+                 flash: '1 0 0 0 .75 0 1 0 0 .75 0 0 1 0 .75 0 0 0 1 0' }
+
+// The whole fight as one self-running SVG, drawn once when it begins (the
+// desktop card can't redraw smoothly). battlePose() sampled across the fight
+// gives each fighter's path and animation segments; every frame, effect,
+// damage number, HP bar and message is switched on one timeline that started
+// t0 ms before this drawing.
+function battleSvg(sp, left, ground, h, font, hud, budget) {
+  if (!battle || Date.now() < battle.start) return ''
+  const s = battleSetup(sp)
+  if (!s || !packFor(spriteOf(s.A)) || !packFor(spriteOf(s.B))) return ''
+  const total = battleLen(battle), t0 = Date.now() - battle.start, evs = moveEvents(battle)
+  const tag = 'b' + (++drawSeq).toString(36), on = `begin="${-t0}ms" dur="${total}ms" fill="freeze"`
+  const at = (t) => (Math.min(total, Math.max(0, t)) / total).toFixed(5)
+  // a discrete track from [[fight time, value]...] in time order
+  const track = (attr, pts) => {
+    const kv = []
+    for (const [t, v] of pts) {
+      const k = at(t)
+      while (kv.length && kv[kv.length - 1][0] >= k) kv.pop()
+      if (!kv.length || kv[kv.length - 1][1] !== v) kv.push([k, v])
     }
-    if (D && burst) {
-      out += `<g transform="translate(${D.x.toFixed(1)} ${D.y.toFixed(1)})">` + Array.from({ length: 8 }, (_, i) => {
-        const a = Math.PI / 4 * i, r1 = 10, r2 = 22
-        return `<line x1="${(Math.cos(a) * r1).toFixed(1)}" y1="${(Math.sin(a) * r1).toFixed(1)}" x2="${(Math.cos(a) * r2).toFixed(1)}" `
-             + `y2="${(Math.sin(a) * r2).toFixed(1)}" stroke="${fx[2]}" stroke-width="3" stroke-linecap="round"/>`
-      }).join('') + `</g>`
+    kv[0][0] = '0.00000'
+    return `<animate attributeName="${attr}" values="${kv.map((x) => x[1]).join(';')}" keyTimes="${kv.map((x) => x[0]).join(';')}" calcMode="discrete" ${on}/>`
+  }
+  const vis = (spans) => track('visibility', [[0, 'hidden'], ...spans.flatMap(([a, b]) => [[a, 'visible'], [b, 'hidden']])])
+  const times = []
+  for (let t = 0; t < total; t += B_STEP) times.push(t)
+  times.push(total)
+  const end = (j) => times[j + 1] ?? total
+  const poses = times.map((t) => battlePose(t, s)), now = times.map((t) => battleNow(t))
+  const widthOf = (p) => { const b = boxOf(p); return h * b.w / b.h }
+  const centre = (side, t) => {
+    const p = side === 'a' ? s.A : s.B
+    return { x: left + battlePose(t, s)[side].x + widthOf(p) / 2, y: ground - h * 0.45, top: ground - h }
+  }
+
+  // effects first: their size comes off the fighters' frame budget
+  const fxIds = new Map(), ref = (f) => fxIds.get(f) || fxIds.set(f, tag + 'x' + fxIds.size).get(f), fx = []
+  evs.forEach((e, j) => {
+    const t = B_APPROACH + j * B_MOVE, art = fxArt(e.type), def = e.who === 'a' ? 'b' : 'a'
+    const A = centre(e.who, t + B_FIRE), D = centre(def, t + B_IMPACT - 1)
+    if (art) {
+      const z = Math.round(h * 0.42), xy = (P) => P.x.toFixed(1) + ' ' + P.y.toFixed(1)
+      // its looping frames set their own visibility, which beats a hidden parent: hide by opacity
+      fx.push(`<g opacity="0">${track('opacity', [[0, '0'], [t + B_FIRE, '1'], [t + B_IMPACT, '0']])}<g transform="translate(${xy(A)})">`
+        + `<animateTransform attributeName="transform" type="translate" from="${xy(A)}" to="${xy(D)}" begin="${t + B_FIRE - t0}ms" dur="${B_IMPACT - B_FIRE}ms" fill="freeze"/>`
+        + `<svg x="${-z / 2}" y="${-z / 2}" width="${z}" height="${z}" viewBox="0 0 16 16" shape-rendering="crispEdges">`
+        + `<g transform="${e.who === 'b' ? 'translate(16 0) scale(-1 1)' : ''}">${cycle(art.proj.map(ref), art.proj.map(() => FX_MS))}</g></svg></g></g>`)
+      if (e.hit && e.eff > 0) {
+        const r = Math.round(h * 0.75)
+        fx.push(`<svg x="${(D.x - r / 2).toFixed(1)}" y="${(D.y - r / 2).toFixed(1)}" width="${r}" height="${r}" viewBox="0 0 24 24" shape-rendering="crispEdges">`
+          + art.impact.map((f, i) => `<use href="#${ref(f)}" visibility="hidden">${vis([[t + B_IMPACT + i * FX_MS, t + B_IMPACT + (i + 1) * FX_MS]])}</use>`).join('')
+          + `</svg>`)
+      }
+    }
+    const c = hud && battleNow(t + B_IMPACT + 1).callout
+    if (c) {
+      fx.push(`<text x="${D.x.toFixed(1)}" y="${(D.top + 16).toFixed(1)}" text-anchor="middle" ${font} font-size="12" font-weight="800" ${HALO} `
+        + `fill="${c.kind === 'miss' ? '#e5e5e5' : c.kind === 'big' ? '#fde047' : '#ff8a80'}" visibility="hidden">${vis([[t + B_IMPACT, t + B_IMPACT + 700]])}`
+        + `<animateTransform attributeName="transform" type="translate" from="0 0" to="0 -12" begin="${t + B_IMPACT - t0}ms" dur="700ms" fill="freeze"/>${esc(c.text)}</text>`)
+    }
+  })
+  const fxDefs = [...fxIds].map(([f, id]) => `<g id="${id}">${f}</g>`).join('')
+  const room = Math.max(8000, budget - fxDefs.length)
+
+  const fighter = (side, p, per) => {
+    const k = packFor(spriteOf(p)), b = k.box, sw = widthOf(p), idx = side === 'a' ? 0 : 1
+    const segs = [] // runs of samples with the same animation and facing
+    poses.forEach((ps, j) => {
+      const ov = ps[side].ov, id = ov.name + ':' + ov.face, last = segs[segs.length - 1]
+      if (last && last.id === id) last.to = end(j)
+      else segs.push({ id, ov, from: times[j], to: end(j) })
+    })
+    // too heavy (Gyarados): fewer frames, then one facing, then fewer animations
+    const framesOf = (ov, [halvings, level]) => {
+      const name = level >= 3 ? 'Idle' : level >= 2 ? (DEGRADE[ov.name] || ov.name) : ov.name
+      const a = k.anims[name] || k.anims.Idle || k.anims.Walk, face = level >= 1 ? (side === 'a' ? 1 : -1) : ov.face
+      let f = { ms: a.ms, imgs: a.right ? (face < 0 ? a.left : a.right) : a.down }
+      for (let i = 0; i < halvings && f.imgs.length > 1; i++) f = halve(f)
+      return f
+    }
+    const lod = LOD.find((l) => bytes(segs.flatMap((sg) => framesOf(sg.ov, l).imgs)) <= per) || LOD[LOD.length - 1]
+    const spans = new Map() // frame -> when it shows
+    for (const sg of segs) {
+      const { ms, imgs } = framesOf(sg.ov, lod)
+      for (let t = sg.from, j = 0; t < sg.to; j = (j + 1) % imgs.length) {
+        const e = Math.min(sg.to, t + Math.max(10, ms[j])), l = spans.get(imgs[j]) || []
+        if (l.length && l[l.length - 1][1] === t) l[l.length - 1][1] = e
+        else l.push([t, e])
+        spans.set(imgs[j], l)
+        t = e
+      }
+    }
+    const { ids, defs } = frameDefs([...spans.keys()], tag + side)
+    const uses = [...spans].map(([f, l]) => `<use href="#${ids.get(f)}" visibility="hidden">${vis(l)}</use>`).join('')
+    // the path: keep only the samples where the motion changes
+    const xs = poses.map((ps) => left + ps[side].x)
+    const keep = xs.map((x, j) => j === 0 || j >= xs.length - 2 || Math.abs((x - xs[j - 1]) - (xs[j + 1] - x)) > 1e-6)
+    const path = `<animateTransform attributeName="transform" type="translate" values="${xs.filter((_, j) => keep[j]).map((x) => x.toFixed(1) + ' 0').join(';')}" `
+      + `keyTimes="${times.filter((_, j) => keep[j]).map(at).join(';')}" ${on}/>`
+    const look = poses.map((ps, j) => [times[j], ps[side].ov.fainted ? 'gray' : ps[side].ov.flash ? 'flash' : 'normal'])
+    const bar = hud ? (() => { // the HP bar over its head drains with each hit
+      const bw = 34, pts = now.map((bn, j) => [times[j], bn.hp[idx] / Math.max(1, bn.max[idx])])
+      const wk = pts.filter((pt, j) => j === 0 || j === pts.length - 1 || pt[1] !== pts[j - 1][1] || pt[1] !== pts[j + 1][1])
+      return `<rect x="${(sw - bw) / 2}" y="${ground - h - 2}" width="${bw}" height="4" rx="2" fill="${C.track}"/>`
+        + `<rect x="${(sw - bw) / 2}" y="${ground - h - 2}" width="${bw}" height="4" rx="2" fill="#22c55e">`
+        + `<animate attributeName="width" values="${wk.map((pt) => (bw * pt[1]).toFixed(1)).join(';')}" keyTimes="${wk.map((pt) => at(pt[0])).join(';')}" ${on}/>`
+        + track('fill', pts.map(([t, r]) => [t, r > 0.5 ? '#22c55e' : r > 0.2 ? '#eab308' : '#ef4444'])) + `</rect>`
+    })() : ''
+    const koAt = B_APPROACH + evs.length * B_MOVE
+    const joy = side === battle.log.winner
+      ? [[-12, 4, 4], [sw / 2, -6, 5], [sw + 10, 2, 4]].map(([x, y, r]) =>
+        `<polygon transform="translate(${x.toFixed(1)} ${(ground - h + 10 + y).toFixed(1)})" points="0,${-r} ${r * .3},${-r * .3} ${r},0 ${r * .3},${r * .3} 0,${r} ${-r * .3},${r * .3} ${-r},0 ${-r * .3},${-r * .3}" fill="#facc15" visibility="hidden">`
+        + vis([[koAt, total]]) + `<animate attributeName="opacity" values="1;.2;1" dur="600ms" repeatCount="indefinite"/></polygon>`).join('')
+      : ''
+    return {
+      defs: defs + `<filter id="${tag}${side}m"><feColorMatrix type="matrix" values="${MATRIX.normal}">${track('values', look.map(([t, v]) => [t, MATRIX[v]]))}</feColorMatrix></filter>`,
+      body: `<g transform="translate(${xs[0].toFixed(1)} 0)">${path}`
+        + track('opacity', look.map(([t, v]) => [t, v === 'gray' ? '.6' : '1']))
+        + `<ellipse cx="${sw / 2}" cy="${ground}" rx="${sw * 0.28}" ry="${h > 40 ? 3 : 2}" fill="#000" opacity=".22"/>`
+        + `<svg x="0" y="${ground - h + 3}" width="${sw.toFixed(1)}" height="${h}" viewBox="0 0 ${b.w} ${b.h}" shape-rendering="crispEdges" filter="url(#${tag}${side}m)">${uses}</svg>`
+        + bar + joy + `</g>`,
     }
   }
-  if (bn.joy) {
-    const W = posOf(bn.win)
-    if (W) out += [[-16, -6, 5], [14, -14, 4], [2, -22, 6]].map(([dx, dy, r]) =>
-      `<polygon transform="translate(${(W.x + dx).toFixed(1)} ${(W.top + dy + 14).toFixed(1)})" points="0,${-r} ${r * .3},${-r * .3} ${r},0 ${r * .3},${r * .3} 0,${r} ${-r * .3},${r * .3} ${-r},0 ${-r * .3},${-r * .3}" fill="#facc15">`
-      + `<animate attributeName="opacity" values="1;.2;1" dur="600ms" repeatCount="indefinite"/></polygon>`).join('')
-  }
-  return out
+  // half the room each; what a light sheet leaves goes to the other
+  let fa = fighter('a', s.A, room / 2), fb = fighter('b', s.B, room - fa.defs.length)
+  if (fb.defs.length < room / 2) fa = fighter('a', s.A, room - fb.defs.length)
+  // the message line: one text per stretch the message holds
+  const msgs = []
+  if (hud) now.forEach((bn, j) => {
+    const last = msgs[msgs.length - 1]
+    if (last && last.text === bn.msg) last.to = end(j)
+    else msgs.push({ text: bn.msg, from: times[j], to: end(j) })
+  })
+  return `<defs>${fxDefs}${fa.defs}${fb.defs}</defs>${fa.body}${fb.body}${fx.join('')}`
+    + msgs.map((m) => `<text x="${left}" y="14" ${font} font-size="12" font-weight="700" fill="#fafafa" ${HALO} visibility="hidden">${vis([[m.from, m.to]])}${esc(m.text)}</text>`).join('')
 }
 
-function card(pet, name, pct, sp, own) {
+function card(pet, name, pct, sp, own, budget = FRAME_BUDGET) {
   const font = `font-family="ui-monospace, SFMono-Regular, Menlo, monospace"`
   const dots = team.map((_, i) => {
     const cx = 18 + i * 14
@@ -1197,7 +1356,6 @@ function card(pet, name, pct, sp, own) {
     + (pct > 0 ? `<rect x="${bx}" y="88" width="${Math.max(9, bw * pct / 100).toFixed(1)}" height="9" rx="4.5" fill="${maxed ? C.max : C.exp}"/>` : '')
     + `<text x="${bx + bw + 6}" y="96" ${font} font-size="9" font-weight="700" fill="${maxed ? C.max : C.dim}">${maxed ? 'MAX' : pct + '%'}</text>`
     + `<line x1="${STAGE_X + 6}" y1="${GROUND}" x2="${STAGE_X + STAGE_W - 6}" y2="${GROUND}" stroke="${C.ground}" stroke-opacity=".35" stroke-width="2" stroke-linecap="round"/>`
-    + sprites(sp, STAGE_X + 8, GROUND, SVG_H)
-    + battleFx(sp, STAGE_X + 8, GROUND, SVG_H, font)
+    + fightAnd(sp, STAGE_X + 8, GROUND, SVG_H, font, true, budget)
     + `</svg>`
 }

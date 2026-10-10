@@ -5,7 +5,7 @@
 // Every session's pokemon shares one scene, so parallel agents battle when
 // idle and charge together when busy, and a pokemon that levels up evolves
 // on screen. Terminal (kitty graphics or colored cells) and desktop app (SVG).
-const VERSION = '2.0.1'
+const VERSION = '2.1.0'
 const FALLBACK = 'https://pikamaxxing.vercel.app'
 const TICK = 100         // ms per engine step; the terminal band redraws at most 10/s
 const SLEEP_MS = 300000  // quiet this long -> nap
@@ -13,7 +13,7 @@ const LIVE_MS = 15000    // a session not heard from this long has left the scen
 const BEAT_MS = 5000     // presence heartbeat
 const POLL_MS = 2000     // how often a session reads the others
 const MAX_PETS = 3
-const LEFT_W = 16, RIGHT_W = 29 // terminal: brand on the left, info and controls on the right, columns
+const LEFT_W = 16, RIGHT_W = 32 // terminal: brand on the left, info and controls on the right, columns
 const LINK_TOOL = 'link'
 
 // behaviour tables (from the original PikaMaxxing desktop overlay)
@@ -63,8 +63,9 @@ let mode = 'cells'        // png: terminal Image, cells: terminal Raster, svg: d
 let stopped = false, compact = false
 let cols = 80
 let lastScene = '', drawSeq = 0, lastBeat = 0
-let battle = null         // shared fight: {start, winner, a, b, manual}
-let battleIn = rand(180, 420) * 1000, teamIn = rand(10, 20) * 1000
+let battle = null         // shared fight: {start, seed, a, b, log, manual}; log decided by the server
+let battleIn = rand(120, 300) * 1000, teamIn = rand(10, 20) * 1000, lastBattle = 0
+let battlesOn = true       // /pika battle off|on
 let legacy = false        // the old desktop app's Stop hook still reports; don't double count
 let pending = 0           // tokens earned and not yet credited
 let updateHint = ''
@@ -80,7 +81,7 @@ function newPet(sid, slot) {
            thinkShow: 'Charge', idleIn: rand(10, 30) * 1000, idleMode: 'Sit', idleHold: 0, ov: null, evo: null }
 }
 const me = () => pets.get(mySid)
-const petOf = (p) => team[Math.min(p.slot, team.length - 1)]
+const petOf = (p) => p.wildPet || team[Math.min(p.slot, team.length - 1)]
 const spriteOf = (p) => p.ov?.sprite || petOf(p)?.sprite
 const packFor = (sprite) => sprite && packs[mode + ':' + sprite]
 const has = (p, name) => mode === 'cells' || Boolean(packFor(spriteOf(p))?.anims?.[name])
@@ -89,7 +90,10 @@ const cut = (p) => { p.fi = 0; p.left = 0 }
 const resting = (p) => p.phase === 'idle' || p.phase === 'done'
 const quiet = (p) => Date.now() - p.at
 // the scene, in slot order, capped like the original overlay
-const scenePets = () => [...pets.values()].sort((a, b) => a.slot - b.slot).slice(0, MAX_PETS)
+const scenePets = () => {
+  const s = [...pets.values()].filter((p) => p.sid !== 'wild').sort((a, b) => a.slot - b.slot).slice(0, MAX_PETS)
+  return pets.has('wild') ? [...s, pets.get('wild')] : s
+}
 
 // ---- behaviour engine (one per pokemon) ----
 function nextBeat(p) {
@@ -237,15 +241,37 @@ function frameList(p) {
 }
 
 // ---- ceremonies shared by the scene ----
-// Battle: the original overlay's mock fight (approach, 4 rounds, finish,
-// retreat), on wall-clock time so every session's band plays the same one.
-const B_APPROACH = 3000, B_ROUND = 1333, B_FINISH = 2333, B_RETREAT = 3000
-const B_TOTAL = B_APPROACH + 4 * B_ROUND + B_FINISH + B_RETREAT
+// Battle: decided on the server (stats, types, luck) and played here from its
+// log on wall-clock time, so every session's band shows the same fight.
+const B_APPROACH = 3000, B_MOVE = 1200, B_IMPACT = 350, B_KO = 2000, B_RETREAT = 2000
+const moveEvents = (b) => b.log.events.filter((e) => e.t === 'move')
+const battleLen = (b) => B_APPROACH + moveEvents(b).length * B_MOVE + B_KO + B_RETREAT
+// not every species has every move: fall back to the nearest one its sheet has
+const ANIM_FALLBACK = { Pose: ['Pose', 'Hop', 'Idle'], Tumble: ['Tumble', 'Sleep', 'Hurt', 'Idle'], Faint: ['Sleep', 'Hurt', 'Idle'],
+                   Shoot: ['Shoot', 'Attack', 'Idle'], Swing: ['Swing', 'Attack', 'Idle'], Double: ['Double', 'Attack', 'Idle'],
+                   Attack: ['Attack', 'Idle'], Hurt: ['Hurt', 'Idle'], Hop: ['Hop', 'Idle'] }
+const anim = (p, name) => (ANIM_FALLBACK[name] || [name, 'Idle']).find((n) => has(p, n)) || 'Idle'
+
+// the fight at time t: HP of both sides and a callout over whoever just got hit
+function battleNow(t = Date.now() - (battle?.start || 0)) {
+  if (!battle) return null
+  const evs = moveEvents(battle), L = battle.log
+  let hp = [L.a.hp, L.b.hp], callout = null
+  evs.forEach((e, j) => {
+    const at = B_APPROACH + j * B_MOVE + B_IMPACT
+    if (t >= at) hp = e.hp
+    if (t >= at && t < at + 700) {
+      const text = !e.hit ? 'miss' : e.eff === 0 ? 'no effect' : (e.crit ? 'CRIT -' : '-') + e.dmg + (e.eff >= 2 ? '!' : '')
+      callout = { who: e.who === 'a' ? 'b' : 'a', text, kind: !e.hit || e.eff === 0 ? 'miss' : e.crit || e.eff >= 2 ? 'big' : 'hit' }
+    }
+  })
+  return { t, hp, max: [L.a.hp, L.b.hp], callout, names: [L.a.name, L.b.name] }
+}
 
 function battleStep(sp) {
   const a = pets.get(battle.a), b = pets.get(battle.b)
-  const t = Date.now() - battle.start
-  if (!a || !b || t > B_TOTAL || (!battle.manual && (!resting(a) || !resting(b)))) return false
+  const t = Date.now() - battle.start, total = battleLen(battle)
+  if (!a || !b || t > total || (!battle.manual && (!resting(a) || !resting(b)))) return false
   if (t < 0) return true
   const n = sp.length, ga = geo(a, sp.indexOf(a), n), gb = geo(b, sp.indexOf(b), n)
   const mid = Math.round(ga.stage / 2), L = mid - ga.w - 1, R = mid + 1
@@ -255,21 +281,29 @@ function battleStep(sp) {
     p.x += tx > p.x ? g.speed : -g.speed
     return false
   }
-  if (t < B_APPROACH || t >= B_TOTAL - B_RETREAT) {
-    const back = t >= B_TOTAL - B_RETREAT
-    const ta = back ? Math.round((ga.lo + ga.hi) / 2) : L, tb = back ? Math.round((gb.lo + gb.hi) / 2) : R
-    const fa = ta >= a.x ? 1 : -1, fb = tb >= b.x ? 1 : -1
-    a.ov = walkTo(a, ga, ta) ? { name: 'Idle', face: back ? fa : 1 } : { name: 'Walk', face: fa }
-    b.ov = walkTo(b, gb, tb) ? { name: 'Idle', face: back ? fb : -1 } : { name: 'Walk', face: fb }
-  } else if (t < B_APPROACH + 4 * B_ROUND) {
-    const round = Math.floor((t - B_APPROACH) / B_ROUND)
-    const atk = (round + battle.winner) % 2 === 0 ? a : b, def = atk === a ? b : a
-    atk.ov = { name: 'Attack', face: atk === a ? 1 : -1 }
-    def.ov = { name: 'Hurt', face: def === a ? 1 : -1 }
-  } else {
-    const win = battle.winner === 0 ? a : b, lose = win === a ? b : a
-    win.ov = { name: 'Pose', face: win === a ? 1 : -1 }
-    lose.ov = { name: 'Tumble', face: lose === a ? 1 : -1 }
+  const evs = moveEvents(battle), koAt = B_APPROACH + evs.length * B_MOVE
+  const win = battle.log.winner === 'a' ? a : b, lose = win === a ? b : a
+  if (t < B_APPROACH) { // walk in to meet in the middle
+    a.ov = walkTo(a, ga, L) ? { name: 'Idle', face: 1 } : { name: 'Walk', face: L >= a.x ? 1 : -1 }
+    b.ov = walkTo(b, gb, R) ? { name: 'Idle', face: -1 } : { name: 'Walk', face: R >= b.x ? 1 : -1 }
+  } else if (t < koAt) { // one move per event: attack, then the hit (or the dodge) lands
+    const i = Math.floor((t - B_APPROACH) / B_MOVE), e = evs[i], u = t - B_APPROACH - i * B_MOVE
+    const att = e.who === 'a' ? a : b, def = att === a ? b : a
+    const fa = att === a ? 1 : -1
+    att.ov = { name: anim(att, e.anim), face: fa }
+    if (u < B_IMPACT) def.ov = { name: 'Idle', face: -fa }
+    else if (e.hit && e.eff > 0) def.ov = { name: u < B_IMPACT + 500 ? anim(def, 'Hurt') : 'Idle', face: -fa, flash: u < B_IMPACT + 150 }
+    else def.ov = { name: anim(def, 'Hop'), face: -fa }
+  } else if (t < koAt + B_KO) { // the winner poses, the loser goes down
+    win.ov = { name: anim(win, 'Pose'), face: win === a ? 1 : -1 }
+    lose.ov = { name: anim(lose, 'Tumble'), face: lose === a ? 1 : -1 }
+  } else { // the winner walks home; the loser stays down (a wild one runs off)
+    const gw = win === a ? ga : gb, home = win.sid === 'wild' ? gw.stage : Math.round((gw.lo + gw.hi) / 2)
+    win.ov = walkTo(win, gw, home) ? { name: 'Idle', face: 1 } : { name: 'Walk', face: home >= win.x ? 1 : -1 }
+    if (lose.sid === 'wild') {
+      const gl = lose === a ? ga : gb
+      lose.ov = walkTo(lose, gl, gl.stage) ? { name: 'Idle', face: 1 } : { name: 'Walk', face: 1 }
+    } else lose.ov = { name: anim(lose, 'Faint'), face: lose === a ? 1 : -1 }
   }
   return true
 }
@@ -295,14 +329,17 @@ function direct($) {
   if (battle && !battleStep(sp)) {
     if (isLeader()) $.store.delete('battle').catch(() => {})
     battle = null
+    lastBattle = Date.now()
+    pets.delete('wild')
     for (const p of sp) if (!p.evo) p.ov = null
   }
-  // the leader schedules ambient fights while the first two are idle
-  if (!battle && isLeader() && sp.length >= 2 && resting(sp[0]) && resting(sp[1])) {
+  // the leader starts a fight now and then while everyone rests: two sessions
+  // spar with each other, a lone one meets a wild pokemon
+  if (!battle && battlesOn && isLeader() && sp.every(resting)) {
     battleIn -= TICK
     if (battleIn <= 0) {
-      battleIn = rand(180, 420) * 1000
-      startBattle($, sp[0], sp[1], false)
+      battleIn = rand(120, 300) * 1000
+      startBattle($, false)
     }
   }
   // parallel agents thinking: now and then a wave of hops, then charge as one
@@ -321,9 +358,28 @@ function direct($) {
 
 const isLeader = () => scenePets()[0]?.sid === mySid
 
-async function startBattle($, a, b, manual) {
-  battle = { start: Date.now() + 2500, winner: rand(0, 1), a: a.sid, b: b.sid, manual }
+// a wild pokemon visits for one fight, entering from the right edge
+function wildVisitor(b) {
+  const w = Object.assign(newPet('wild', 99), { wildPet: { species: b.name, sprite: b.sprite, exp_pct: 0 }, x: 9999 })
+  pets.set('wild', w)
+  return w
+}
+
+// Ask the server to decide a fight, then share it with every session.
+async function startBattle($, manual) {
+  if (battle || account !== 'ok') return null
+  const sp = scenePets().filter((p) => p.sid !== 'wild')
+  const a = sp[0], b = sp[1], aPet = a && petOf(a), bPet = b && petOf(b)
+  if (!aPet) return null
+  const spar = Boolean(bPet && bPet.id !== aPet.id)
+  const seed = rand(1, 2 ** 31 - 2)
+  const r = await api($, '/api/battle/sim?secret=' + secret + '&a=' + aPet.id + '&b=' + (spar ? bPet.id : 'wild:' + seed) + '&seed=' + seed)
+  if (!r.ok || !r.data?.log) return null
+  const log = r.data.log
+  if (!spar) { await loadPack($, log.b.sprite); wildVisitor(log.b) }
+  battle = { start: Date.now() + 1500, seed, a: a.sid, b: spar ? b.sid : 'wild', log, manual }
   await $.store.set('battle', battle)
+  return log
 }
 
 // ---- sessions share the scene through the plugin store ----
@@ -351,9 +407,12 @@ async function readOthers($) {
     pets.set(sid, p)
     loadPack($, spriteOf(p))
   }
-  for (const sid of pets.keys()) if (!seen.has(sid)) pets.delete(sid)
+  for (const sid of pets.keys()) if (!seen.has(sid) && sid !== 'wild') pets.delete(sid)
   const b = await $.store.get('battle')
-  if (b && (!battle || b.start !== battle.start)) battle = b
+  if (b?.log && (!battle || b.start !== battle.start) && Date.now() - b.start < battleLen(b)) {
+    if (b.b === 'wild') { await loadPack($, b.log.b.sprite); wildVisitor(b.log.b) }
+    battle = b
+  }
 }
 
 // a new session takes the lowest team slot nobody in the scene holds
@@ -603,7 +662,7 @@ function pressed($, key) {
   return {
     prev: () => switchTo($, -1), next: () => switchTo($, 1),
     stop: () => setStopped($, true), resume: () => setStopped($, false),
-    page: () => openPage($), poke: () => poke(),
+    page: () => openPage($), poke: () => poke(), battle: () => startBattle($, true),
     minimize: () => setCompact($, true), expand: () => setCompact($, false),
   }[key]
 }
@@ -632,15 +691,21 @@ async function pikaCommand($, args) {
   }
   if (verb === 'stop' || verb === 'resume') { await setStopped($, verb === 'stop'); return verb === 'stop' ? 'Stopped.' : 'Back!' }
   if (verb === 'battle') {
-    const sp = scenePets()
-    if (sp.length < 2) return 'A battle needs two Claude sessions open at once.'
-    await startBattle($, sp[0], sp[1], true)
-    return 'Fight!'
+    const opt = rest[0]
+    if (opt === 'off' || opt === 'on') {
+      battlesOn = opt === 'on'
+      await $.store.set('battles', opt)
+      return battlesOn ? 'Battles on: your pokemon will fight now and then while you rest.' : 'Battles off. /pika battle still starts one.'
+    }
+    if (battle) return 'A battle is already on!'
+    const log = await startBattle($, true)
+    if (!log) return 'No battle right now: link a trainer with a pokemon first.'
+    return 'Fight! ' + log.a.name + ' (L' + log.a.level + ') vs ' + (battle?.b === 'wild' ? 'a wild ' : '') + log.b.name + ' (L' + log.b.level + ')'
   }
   if (account === 'unlinked') return 'Not linked yet. Sign in at ' + FALLBACK + ', then run the /pika link line from your trainer page.'
   const p = me(), pet = p && petOf(p)
   return (pet ? pet.species + ' · ' + pet.tokens.toLocaleString() + ' tokens · ' + (pet.exp_pct ?? 0) + '% to next level\n' : '')
-    + 'Commands: /pika link <secret> · /pika unlink · /pika stop · /pika resume · /pika battle'
+    + 'Commands: /pika link <secret> · /pika unlink · /pika stop · /pika resume · /pika battle [off|on]'
 }
 
 export function register(on) {
@@ -654,6 +719,7 @@ export function register(on) {
     }).catch(() => {})
     mySid = await $.session.id().catch(() => 'local')
     stopped = (await $.store.get('stopped')) === true
+    battlesOn = (await $.store.get('battles')) !== 'off'
     compact = (await $.store.get('compact')) === true
     gfx = Boolean((await $.env.get('GHOSTTY_RESOURCES_DIR')) || (await $.env.get('KITTY_WINDOW_ID')))
     mode = modeFor(e.surface) || mode
@@ -723,7 +789,12 @@ export function register(on) {
       await savePending($)
       flush($)
     }
-    if (!e.agentId) await setPhase($, 'done')
+    if (!e.agentId) {
+      await setPhase($, 'done')
+      if (battlesOn && !battle && isLeader() && Date.now() - lastBattle > 180000 && Math.random() < 0.2) {
+        $.clock.after(1500, () => { startBattle($, false).catch(() => {}) })
+      }
+    }
     return next(e)
   })
   on('classic.Notification', async ($, e, next) => {
@@ -813,6 +884,7 @@ export function register(on) {
           ] }),
           Box({ flexDirection: 'row', columnGap: 1, children: [
             // flat glyphs: U+FE0E asks for the text (monochrome) form, not the colour emoji
+            dbtn('battle', '⚔︎', () => startBattle($, true)),
             dbtn('poke', '✋︎', () => poke()),
             dbtn('stop', '⏹︎', () => setStopped($, true)),
             dbtn('page', '\u{1F310}︎', () => openPage($)),
@@ -834,6 +906,23 @@ export function register(on) {
         : Raster({ key, columns: b.columns, rows: b.rows, cells: img })
       return Box({ position: 'absolute', left: Math.max(0, Math.round(p.x || 0)), top: Math.max(0, H - rows), children: [el] })
     }).filter(Boolean)
+    // in a fight: HP bars replace the EXP bar, and hits get a callout
+    const bn = battle && Date.now() >= battle.start ? battleNow() : null
+    const mineIdx = bn ? (battle.a === mySid ? 0 : battle.b === mySid ? 1 : 0) : 0
+    const hpBar = (key, i, w) => {
+      const f = Math.round(w * bn.hp[i] / Math.max(1, bn.max[i])), r = bn.hp[i] / Math.max(1, bn.max[i])
+      return Box({ key, flexDirection: 'row', children: [
+        Text({ color: r > 0.5 ? 'green' : r > 0.2 ? 'yellow' : 'red', children: ['━'.repeat(f)] }),
+        Text({ dimColor: true, children: ['─'.repeat(w - f) + ' '] }),
+        Text({ children: [String(bn.hp[i])] }),
+      ] })
+    }
+    if (bn?.callout) {
+      const target = pets.get(bn.callout.who === 'a' ? battle.a : battle.b)
+      if (target) sprites.push(Box({ position: 'absolute', left: Math.max(0, Math.round(target.x || 0)), top: 0, children: [
+        Text({ key: 'callout', bold: true, color: bn.callout.kind === 'miss' ? undefined : bn.callout.kind === 'big' ? 'yellow' : 'red',
+               dimColor: bn.callout.kind === 'miss', children: [bn.callout.text] })] }))
+    }
     const stage = Box({ flexGrow: 1, position: 'relative', height: H, children: sprites })
 
     if (compact) { // minimized: the pokemon walk one slim line, expand at the top-right
@@ -847,6 +936,7 @@ export function register(on) {
     }
 
     const full = Math.round(GAUGE_W * pct / 100)
+    const lvl = pet.stats ? 'L' + pet.stats.level + ' ' : ''
     return Box({ flexDirection: 'column', children: [
       Box({ flexDirection: 'row', children: [
         // left: the brand, centred in the band's height
@@ -860,12 +950,12 @@ export function register(on) {
           Box({ flexDirection: 'row', justifyContent: 'space-between', children: [
             Box({ flexDirection: 'row', columnGap: 1, children: [
               Button({ key: 'poke', label: name, plain: true, onPress: () => poke() }),
-              Text({ dimColor: true, children: [slotText] }),
+              Text({ dimColor: true, children: [lvl + slotText] }),
             ] }),
             btn('minimize', '−', () => setCompact($, true)),
           ] }),
           Box({ flexDirection: 'row', columnGap: 2, children: [
-            Box({ key: 'exp', flexDirection: 'row', children: [
+            bn ? hpBar('hp-mine', mineIdx, GAUGE_W) : Box({ key: 'exp', flexDirection: 'row', children: [
               Text({ color: pct >= 100 ? 'yellow' : 'cyan', children: ['━'.repeat(full)] }),
               Text({ dimColor: true, children: ['─'.repeat(GAUGE_W - full) + ' '] }),
               Text({ dimColor: pct < 100, color: pct >= 100 ? 'yellow' : undefined,
@@ -874,8 +964,12 @@ export function register(on) {
             Box({ flexDirection: 'row', columnGap: 1, children: [
               btn('prev', '‹', () => switchTo($, -1)), btn('next', '›', () => switchTo($, 1)),
               btn('stop', '■', () => setStopped($, true)), btn('page', '↗', () => openPage($)),
+              btn('battle', '⚔', () => startBattle($, true)),
             ] }),
           ] }),
+          ...(bn ? [Box({ flexDirection: 'row', columnGap: 1, children: [
+            Text({ dimColor: true, wrap: 'truncate', children: ['vs ' + bn.names[1 - mineIdx]] }), hpBar('hp-foe', 1 - mineIdx, 8),
+          ] })] : []),
         ] }),
       ] }),
       ...below,
@@ -895,7 +989,10 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
 function phaseLabel(p) {
   if (p.evo) return 'evolving!'
-  if (battle && (battle.a === p.sid || battle.b === p.sid) && Date.now() >= battle.start) return 'battling!'
+  if (battle && (battle.a === p.sid || battle.b === p.sid) && Date.now() >= battle.start) {
+    const now = battleNow(), mine = battle.a === p.sid ? 0 : 1
+    return 'vs ' + now.names[1 - mine] + ' · HP ' + now.hp[mine] + '/' + now.max[mine] + ' · ' + now.hp[1 - mine] + '/' + now.max[1 - mine]
+  }
   if (resting(p) && quiet(p) > SLEEP_MS) return 'napping'
   if (p.phase === 'tool') return 'using ' + (p.tool || 'a tool')
   return { think: 'thinking…', done: 'done!', alert: 'needs you', idle: 'hanging out' }[p.phase] || 'hanging out'

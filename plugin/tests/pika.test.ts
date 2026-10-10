@@ -27,8 +27,16 @@ const SIDE = (png: string) => ({ ...ANIM(png), right: [png, png], left: [png, pn
 const PACK = {
   box: { columns: 4, rows: 3, w: 10, h: 10 },
   anims: { Idle: { ...ANIM(RED), glow: [WHITE, WHITE] }, Walk: SIDE(RED), Charge: ANIM(GREEN),
-           Attack: SIDE(BLUE), Hurt: SIDE(BLUE), Pose: ANIM(RED), Tumble: SIDE(RED), Hop: ANIM(RED) },
+           Attack: SIDE(BLUE), Hurt: SIDE(GREEN), Pose: ANIM(RED), Tumble: SIDE(RED), Hop: ANIM(RED) },
 }
+// a server-decided fight: b strikes first (Surf), a answers, b goes down
+const LOG = (bName = 'Onix', bSprite = '0095') => ({ v: 1, seed: 5, winner: 'a', reason: 'ko',
+  a: { id: 1, name: 'Pikachu', dex: '0025', sprite: '0025', level: 9, hp: 27 },
+  b: { id: 2, name: bName, dex: bSprite, sprite: bSprite, level: 9, hp: 30 },
+  events: [
+    { t: 'move', who: 'b', move: 'Surf', type: 'water', anim: 'Shoot', hit: true, crit: false, eff: 1, dmg: 10, hp: [17, 30] },
+    { t: 'move', who: 'a', move: 'Thunderbolt', type: 'electric', anim: 'Shoot', hit: true, crit: true, eff: 2, dmg: 30, hp: [17, 0] },
+    { t: 'ko', who: 'b' }] })
 const DOT = '<path fill="#ff0000" d="M0 0h1v1h-1z"/>'
 const SVGPACK = { box: PACK.box, anims: { Idle: { ms: [100], down: [DOT] }, Walk: { ms: [100], down: [DOT], right: [DOT], left: [DOT] } } }
 const CELLS = { columns: 2, rows: 1, ms: 300, frames: ['gCUAAAAA/wAAAAABIAAAAAAAAAEAAAAB', 'IAAAAAAAAAEAAAABgCUAAAD/AAAAAAAB'] }
@@ -44,7 +52,7 @@ function stubs(on: any, o: Opts = {}) {
   const saved = new Map<string, unknown>(Object.entries(o.store || {}))
   if (o.linked !== false && !saved.has('link')) saved.set('link', { secret: SECRET, url: 'https://pika.test' })
   const files = new Map<string, string>(Object.entries(o.files || {}))
-  const posts: any[] = [], ran: string[][] = [], toasts: string[] = []
+  const posts: any[] = [], ran: string[][] = [], toasts: string[] = [], battles: string[] = []
   const reply = (status: number, body: unknown) => ({ value: { ok: status < 400, status, headers: {}, text: JSON.stringify(body) } })
   on('command.register', () => ({ value: undefined }))
   on('tool.register', () => ({ value: { tool: 'mcp__pikamaxxing__link' } }))
@@ -78,6 +86,10 @@ function stubs(on: any, o: Opts = {}) {
       const r = o.me ? o.me(s) : { status: 200, body: PIKACHU }
       return reply(r.status, r.body)
     }
+    if (url.includes('/api/battle/sim')) {
+      battles.push(url)
+      return reply(200, { log: url.includes('wild:') ? LOG('Koffing', '0109') : LOG() })
+    }
     if (url.includes('/api/version')) return reply(200, { plugin: o.plugin || '2.0.0' })
     if (url.includes('fmt=svg')) return reply(200, SVGPACK)
     if (url.includes('/api/pack/')) return reply(200, PACK)
@@ -90,7 +102,7 @@ function stubs(on: any, o: Opts = {}) {
   on('tool.call', () => ({ result: 'ok' }))
   // Stands for what Claude Code (or a later mod) draws in the band
   on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine band'] }))
-  return { clock, saved, files, posts, ran, toasts }
+  return { clock, saved, files, posts, ran, toasts, battles }
 }
 
 const start = ($: any, surface = 'terminal') => $.session.start({ surface, isInteractive: true, cwd: '/work' })
@@ -275,18 +287,43 @@ test('another live session shares the scene and this one takes the next free slo
   await ui.unmount()
 })
 
-test('a shared battle plays the same fight in every band', async ($, on) => {
+test('a server-decided fight plays from its log: the hit lands, HP drops, a callout shows', async ($, on) => {
   const now = Date.now()
   const { clock } = stubs(on, { store: {
-    's:sess-B': { slot: 0, phase: 'idle', tool: '', at: now, ts: now },
-    battle: { start: now - 3500, winner: 0, a: 'sess-B', b: 'sess-A', manual: true }, // mid round 1
+    's:sess-B': { slot: 1, phase: 'idle', tool: '', at: now, ts: now },
+    battle: { start: now - 3500, seed: 5, a: 'sess-A', b: 'sess-B', log: LOG(), manual: true }, // first move, after impact
   } })
   await start($)
   await clock.advance(300)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  const img: any = await ui.find({ key: 'pika' })
-  expect(img.props.source.png).toBe(BLUE) // Attack or Hurt frames
+  expect((await ui.find({ key: 'pika' }) as any).props.source.png).toBe(GREEN) // this session's pokemon flinches (Hurt)
+  expect(await ui.find({ key: 'hp-mine' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '17' })).toBeDefined()  // HP after the hit
+  expect(await ui.find({ type: 'Text', text: /^vs Onix/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '-10' })).toBeDefined() // damage callout
   await ui.unmount()
+})
+
+test('alone, /pika battle brings a wild pokemon in for a server-decided fight', async ($, on) => {
+  const { battles, saved, clock } = stubs(on)
+  await start($)
+  await clock.advance(300)
+  const r: any = await $.command.run({ command: 'pika', args: 'battle' })
+  expect(r.text).toMatch(/^Fight! Pikachu \(L9\) vs a wild Koffing \(L9\)/)
+  expect(battles[0]).toMatch(/b=wild:\d+&seed=\d+/)
+  expect((saved.get('battle') as any).b).toBe('wild')
+  await clock.advance(300)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ key: 'pika-99' })).toBeDefined() // the wild visitor is on stage
+  await ui.unmount()
+})
+
+test('/pika battle off stops ambient fights and is remembered', async ($, on) => {
+  const { saved } = stubs(on)
+  await start($)
+  const r: any = await $.command.run({ command: 'pika', args: 'battle off' })
+  expect(r.text).toMatch(/^Battles off/)
+  expect(saved.get('battles')).toBe('off')
 })
 
 test('a pokemon whose form changes evolves on screen', async ($, on) => {

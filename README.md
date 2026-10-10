@@ -27,9 +27,12 @@ the Claude desktop app, and earns from every turn you run.
   victory pose when a turn ends, and naps when you step away.
 - **Every turn earns tokens** for the pokemon at the front of your team, and
   it evolves on screen when it levels up.
+- **Real battles:** every pokemon has stats (level from tokens, a grade from
+  S to F, type and moves). Fights are decided by those stats plus luck: your
+  sessions spar with each other, a lone session meets wild pokemon, and the
+  band shows every move, hit, miss and HP bar.
 - **Parallel sessions share one scene:** each Claude session brings the next
-  pokemon from your team. When they idle together they battle; when they all
-  think at once they charge up together.
+  pokemon from your team, and they charge up together when all are thinking.
 - **Controls:** switch pokemon (‹ ›), poke it, stop it, minimize the band, or
   open your trainer page. `/pika` shows status and commands.
 
@@ -40,7 +43,7 @@ the Claude desktop app, and earns from every turn you run.
 | `/pika` | Status and the command list |
 | `/pika link <secret>` | Connect this machine to your trainer |
 | `/pika stop`, `/pika resume` | Hide or bring back the pokemon |
-| `/pika battle` | Start a battle between two open sessions |
+| `/pika battle` | Start a battle now (`/pika battle off` / `on` for the automatic ones) |
 | `/pikamaxxing:update` | Update the plugin |
 
 Works in any terminal; Ghostty and kitty show the real pixel sprite. Needs a

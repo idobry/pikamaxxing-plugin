@@ -6,7 +6,7 @@
 const FALLBACK = 'https://pikamaxxing.vercel.app'
 const TICK = 100        // ms per engine step; the band redraws at most 10/s
 const SLEEP_MS = 300000 // quiet this long -> nap (Mac: SESSION_SLEEP_SECS)
-const BTN_W = 4, INFO_W = 20, CTRL_W = BTN_W + INFO_W + 1 // terminal left side, columns
+const LEFT_W = 16, RIGHT_W = 29 // terminal: brand on the left, info and controls on the right, columns
 
 // behaviour tables, verbatim from the Mac app
 const IDLE_BEHAVIORS = ['Eat', 'Nod', 'LookUp', 'DeepBreath', 'Shake', 'Trip', 'Laying']
@@ -160,10 +160,10 @@ function geo() {
   }
   if (compact) { // the minimized line: a 2-row pokemon after the expand button
     const w = miniCols()
-    return { w, stage: Math.max(w, cols - 4), speed: 1 }
+    return { w, stage: Math.max(w, cols - 3), speed: 1 }
   }
   const w = b.columns
-  return { w, stage: Math.max(w, cols - CTRL_W - 2), speed: 1 }
+  return { w, stage: Math.max(w, cols - LEFT_W - RIGHT_W - 1), speed: 1 }
 }
 
 const MINI_ROWS = 2
@@ -322,7 +322,7 @@ export function register(on) {
 
     // desktop: a red frame on the app's own background, so its native buttons
     // look as the app intends in dark and light themes; the drawing uses
-    // mid-tone colours that read on both. Minimize/expand sits top-left.
+    // mid-tone colours that read on both. Minimize/expand sits top-right.
     const dbtn = (key, label, onPress) => Button({ key, label, onPress })
     const corner = Box({ alignSelf: 'flex-start', children: [compact
       ? dbtn('expand', '+', () => setCompact($, false))
@@ -337,12 +337,11 @@ export function register(on) {
     })
 
     if (mode === 'svg' && compact) {
-      return frame([corner, Svg({ alt: name, width: STRIP_W, height: STRIP_H, source: strip(img, b) })])
+      return frame([Svg({ alt: name, width: STRIP_W, height: STRIP_H, source: strip(img, b) }), Box({ flexGrow: 1 }), corner])
     }
 
     if (mode === 'svg') {
       return frame([
-        corner,
         Svg({ alt: name + ', ' + phaseLabel() + ', ' + pct + '% to next level',
               width: CARD_W, height: CARD_H, source: card(pet, name, pct, img, b) }),
         Box({ flexGrow: 1 }),
@@ -358,11 +357,12 @@ export function register(on) {
             dbtn('page', '\u{1F310}\uFE0E', () => openPage($)),
           ] }),
         ] }),
+        corner,
       ])
     }
 
     const btn = (key, label, onPress) => Button({ key, label, plain: true, dimColor: true, onPress })
-    if (compact) { // minimized: the pokemon walks one slim line, nothing else asks for attention
+    if (compact) { // minimized: the pokemon walks one slim line, expand at the top-right
       const m = mode === 'png'
         ? Image({ key: 'pika', source: { png: img }, columns: miniCols(), rows: MINI_ROWS, alt: pet.species })
         : Raster({ key: 'pika', columns: b.columns, rows: b.rows, cells: img })
@@ -370,8 +370,8 @@ export function register(on) {
         flexDirection: 'column',
         children: [
           Box({ flexDirection: 'row', children: [
-            Box({ width: 3, children: [btn('expand', '+', () => setCompact($, false))] }),
-            Box({ paddingLeft: P.x || 0, children: [m] }),
+            Box({ flexGrow: 1, children: [Box({ paddingLeft: P.x || 0, children: [m] })] }),
+            Box({ alignSelf: 'flex-start', children: [btn('expand', '+', () => setCompact($, false))] }),
           ] }),
           ...below,
         ],
@@ -388,30 +388,33 @@ export function register(on) {
         Box({
           flexDirection: 'row',
           children: [
-            // controls: minimize in the top-left corner, then switch, then stop / page
-            Box({ flexDirection: 'column', width: BTN_W, children: [
-              btn('minimize', '−', () => setCompact($, true)),
-              Box({ flexDirection: 'row', columnGap: 1, children: [
-                btn('prev', '‹', () => switchTo($, -1)), btn('next', '›', () => switchTo($, 1)) ] }),
-              Box({ flexDirection: 'row', columnGap: 1, children: [
-                btn('stop', '■', () => setStopped($, true)), btn('page', '↗', () => openPage($)) ] }),
+            // left: the brand, centred in the band's height
+            Box({ flexDirection: 'row', alignItems: 'center', columnGap: 1, width: LEFT_W, height: b.rows, children: [
+              ...(mode === 'png' ? [Image({ key: 'logo', source: { png: LOGO_PNG }, columns: 2, rows: 1, alt: ' ' })] : []),
+              Text({ color: 'red', bold: true, children: ['PikaMaxxing'] }),
             ] }),
-            // who it is, how far to the next level, and whose app this is
-            Box({ flexDirection: 'column', width: INFO_W, children: [
-              Text({ wrap: 'truncate', children: [Text({ bold: true, children: [name] }), ' ',
-                                                  Text({ dimColor: true, children: [(idx + 1) + '/' + team.length] })] }),
-              Box({ key: 'exp', flexDirection: 'row', children: [
-                Text({ color: pct >= 100 ? 'yellow' : 'cyan', children: ['━'.repeat(full)] }),
-                Text({ dimColor: true, children: ['─'.repeat(GAUGE_W - full) + ' '] }),
-                Text({ dimColor: pct < 100, color: pct >= 100 ? 'yellow' : undefined,
-                       children: [pct >= 100 ? 'MAX' : pct + '%'] }),
+            // middle: where the pokemon roams
+            Box({ flexGrow: 1, children: [Box({ paddingLeft: P.x || 0, children: [mon] })] }),
+            // right: name with minimize in the corner, then EXP bar and controls on one line
+            Box({ flexDirection: 'column', width: RIGHT_W, children: [
+              Box({ flexDirection: 'row', justifyContent: 'space-between', children: [
+                Text({ wrap: 'truncate', children: [Text({ bold: true, children: [name] }), ' ',
+                                                    Text({ dimColor: true, children: [(idx + 1) + '/' + team.length] })] }),
+                btn('minimize', '−', () => setCompact($, true)),
               ] }),
-              Box({ flexDirection: 'row', columnGap: 1, children: [
-                ...(mode === 'png' ? [Image({ key: 'logo', source: { png: LOGO_PNG }, columns: 2, rows: 1, alt: ' ' })] : []),
-                Text({ color: 'red', dimColor: true, children: ['PikaMaxxing'] }),
+              Box({ flexDirection: 'row', columnGap: 2, children: [
+                Box({ key: 'exp', flexDirection: 'row', children: [
+                  Text({ color: pct >= 100 ? 'yellow' : 'cyan', children: ['━'.repeat(full)] }),
+                  Text({ dimColor: true, children: ['─'.repeat(GAUGE_W - full) + ' '] }),
+                  Text({ dimColor: pct < 100, color: pct >= 100 ? 'yellow' : undefined,
+                         children: [pct >= 100 ? 'MAX' : pct + '%'] }),
+                ] }),
+                Box({ flexDirection: 'row', columnGap: 1, children: [
+                  btn('prev', '‹', () => switchTo($, -1)), btn('next', '›', () => switchTo($, 1)),
+                  btn('stop', '■', () => setStopped($, true)), btn('page', '↗', () => openPage($)),
+                ] }),
               ] }),
             ] }),
-            Box({ paddingLeft: P.x || 0, children: [mon] }),
           ],
         }),
         ...below,

@@ -188,9 +188,9 @@ test('the desktop app draws the pokemon as an SVG stage with the same controls',
   expect(svg.props.source).toContain('>62%</text>')
   expect(svg.props.alt).toMatch(/62% to next level/)
   // buttons live inside the frame Box, next to the drawing
-  // minimize sits first in the frame: the top-left corner
-  expect(JSON.stringify(await ui.find({ key: 'card' })).indexOf('"minimize"'))
-    .toBeLessThan(JSON.stringify(await ui.find({ key: 'card' })).indexOf('<svg'))
+  // minimize is the last thing in the frame: the top-right corner
+  const cardJson = JSON.stringify(await ui.find({ key: 'card' }))
+  expect(cardJson.lastIndexOf('"minimize"')).toBeGreaterThan(cardJson.lastIndexOf('"page"'))
   expect(svg.props.source).not.toContain('#fff8e7') // no cream block on the app background
   expect((await ui.find({ key: 'stop' }) as any).props.label).toBe('\u23F9\uFE0E')
   expect((await ui.find({ key: 'page' }) as any).props.label).toBe('\u{1F310}\uFE0E')

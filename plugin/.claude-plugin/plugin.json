@@ -1,7 +1,7 @@
 {
   "name": "pikamaxxing",
-  "version": "1.9.0",
-  "description": "Your Claude Code token usage raises pokemon. Hooks that animate and feed your PikaMaxxing pet.",
+  "version": "2.0.0",
+  "description": "Your Claude Code token usage raises pokemon: your team lives above the prompt, acts out what Claude is doing, and earns from every turn.",
   "author": {
     "name": "idobry"
   }

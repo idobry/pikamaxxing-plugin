@@ -45,6 +45,7 @@ const LOGO_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAHAAAABgCAYAAADFNvbQAAABM0lEQVR42u3cUQ
 const LOGO_SVG = '<path fill="#9c492e" d="M0 0h2v1h-2zM12 0h2v1h-2zM1 1h2v1h-2zM11 1h2v1h-2zM2 2h2v1h-2zM10 2h2v1h-2zM1 8h2v1h-2zM11 8h2v1h-2zM1 9h2v1h-2zM11 9h2v1h-2z"/><path fill="#d97757" d="M0 1h1v1h-1zM13 1h1v1h-1zM1 2h1v1h-1zM12 2h1v1h-1zM1 3h3v1h-3zM10 3h3v1h-3zM2 4h10v1h-10zM1 5h12v1h-12zM0 6h14v1h-14zM0 7h14v1h-14zM0 8h1v1h-1zM3 8h8v1h-8zM13 8h1v1h-1zM0 9h1v1h-1zM3 9h8v1h-8zM13 9h1v1h-1zM1 10h12v1h-12zM2 11h10v1h-10z"/>'
 let stopped = false
 let compact = false      // minimized: one slim line, just the pokemon
+let lastScene = '', drawSeq = 0
 let cols = 80            // band width, learned at render
 let phase = 'idle', tool = '', quietMs = 0
 
@@ -271,6 +272,14 @@ export function register(on) {
     $.clock.every(TICK, () => {
       if (stopped || !pack()) return
       step()
+      // desktop: the SVG animates itself, so redraw only when the scene
+      // changes; every redraw replaces the buttons' press handles, and a
+      // desktop click must not race a 10x-a-second redraw
+      if (mode === 'svg') {
+        const sig = scene()
+        if (sig === lastScene) return
+        lastScene = sig
+      }
       $.ui.invalidate('ui.render')
     })
     $.clock.every(300000, () => loadTeam($)) // tokens and team order change on the site
@@ -350,20 +359,20 @@ export function register(on) {
     const frame = (children) => Box({
       flexDirection: 'column',
       children: [
-        Box({ key: 'card', flexDirection: 'row', alignItems: 'center', width: '100%', columnGap: 2,
-              borderStyle: 'round', borderColor: C.edge, paddingX: 1, children }),
+        Box({ key: 'card', flexDirection: 'row', alignItems: 'center', width: '100%', columnGap: 2, children }),
         ...below,
       ],
     })
 
     if (mode === 'svg' && compact) {
-      return frame([Svg({ alt: name, width: STRIP_W, height: STRIP_H, source: strip(img, b) }), Box({ flexGrow: 1 }), corner])
+      return frame([Svg({ alt: name, width: STRIP_W, height: STRIP_H, isInteractive: true, source: strip(b) }),
+                    Box({ flexGrow: 1 }), corner])
     }
 
     if (mode === 'svg') {
       return frame([
         Svg({ alt: name + ', ' + phaseLabel() + ', ' + pct + '% to next level',
-              width: CARD_W, height: CARD_H, source: card(pet, name, pct, img, b) }),
+              width: CARD_W, height: CARD_H, isInteractive: true, source: card(pet, name, pct, b) }),
         Box({ flexGrow: 1 }),
         Box({ flexDirection: 'column', rowGap: 1, children: [
           Box({ flexDirection: 'row', columnGap: 1, children: [
@@ -461,17 +470,61 @@ function phaseLabel() {
 
 const STRIP_W = 560, STRIP_H = 40, STRIP_SPR = 32 // minimized desktop line
 
-function strip(img, b) {
-  const sw = Math.round(STRIP_SPR * b.w / b.h), x = 8 + (P.x || 0), ground = STRIP_H - 4
+// what the desktop drawing shows; a change here is the only thing that redraws it
+const scene = () => [compact, idx, P.show, P.dir, phaseLabel(), cur()?.exp_pct, team.length].join('|')
+
+const FRAME_BUDGET = 110000 // chars of frame markup per drawing; an Svg takes at most 131072
+
+// The current animation as self-running SVG: every frame once in <defs>
+// (sheets repeat frames), each shown in turn by a discrete SMIL animation at
+// its PMD timing, the whole sprite gliding to the stage edge while it walks.
+// Too heavy (Moltres' Double) -> every other frame, durations merged.
+function animSprite(left, ground, h, b) {
+  let { ms, imgs } = frameList()
+  if (!imgs.length) return ''
+  while (imgs.length > 1) {
+    const uniq = new Set(imgs)
+    if ([...uniq].reduce((n, f) => n + f.length, 0) <= FRAME_BUDGET) break
+    ms = ms.filter((_, i) => i % 2 === 0).map((d, i) => d + (ms[2 * i + 1] || 0))
+    imgs = imgs.filter((_, i) => i % 2 === 0)
+  }
+  const ids = new Map(), tag = 'p' + (++drawSeq).toString(36) + 'f' // unique per drawing
+  const defs = imgs.map((f) => {
+    if (ids.has(f)) return ''
+    ids.set(f, tag + ids.size)
+    return `<g id="${ids.get(f)}">${f}</g>`
+  }).join('')
+  const total = ms.reduce((a, d) => a + d, 0)
+  let t = 0
+  const uses = imgs.map((f, i) => {
+    const a = t / total, z = (t + ms[i]) / total
+    t += ms[i]
+    const values = imgs.length === 1 ? 'visible' : i === 0 ? 'visible;hidden' : z >= 1 ? 'hidden;visible' : 'hidden;visible;hidden'
+    const times = imgs.length === 1 ? '0' : i === 0 ? `0;${z.toFixed(4)}` : z >= 1 ? `0;${a.toFixed(4)}` : `0;${a.toFixed(4)};${z.toFixed(4)}`
+    return `<use href="#${ids.get(f)}" visibility="hidden"><animate attributeName="visibility" values="${values}" `
+         + `keyTimes="${times}" dur="${total}ms" calcMode="discrete" repeatCount="indefinite"/></use>`
+  }).join('')
+  const sw = Math.round(h * b.w / b.h), x0 = left + (P.x || 0)
+  let glide = ''
+  if (P.show === 'Walk') { // same speed the engine moves at, so its x and the picture agree
+    const { w, stage, speed } = geo()
+    const to = left + (P.dir > 0 ? stage - w : 0), secs = Math.abs(to - x0) / (speed * 1000 / TICK)
+    if (secs > 0.05) glide = `<animateTransform attributeName="transform" type="translate" from="${x0} 0" to="${to} 0" dur="${secs.toFixed(2)}s" fill="freeze"/>`
+  }
+  return `<defs>${defs}</defs><g transform="translate(${x0} 0)">${glide}`
+    + `<ellipse cx="${sw / 2}" cy="${ground}" rx="${sw * 0.28}" ry="${h > 40 ? 3 : 2}" fill="#000" opacity=".22"/>`
+    + `<svg x="0" y="${ground - h + 3}" width="${sw}" height="${h}" viewBox="0 0 ${b.w} ${b.h}" shape-rendering="crispEdges">${uses}</svg></g>`
+}
+
+function strip(b) {
+  const ground = STRIP_H - 4
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${STRIP_W}" height="${STRIP_H}" viewBox="0 0 ${STRIP_W} ${STRIP_H}">`
     + `<line x1="4" y1="${ground}" x2="${STRIP_W - 4}" y2="${ground}" stroke="${C.ground}" stroke-opacity=".35" stroke-width="1.5" stroke-linecap="round"/>`
-    + (img ? `<ellipse cx="${x + sw / 2}" cy="${ground}" rx="${sw * 0.28}" ry="2" fill="#000" opacity=".22"/>`
-      + `<svg x="${x}" y="${ground - STRIP_SPR + 2}" width="${sw}" height="${STRIP_SPR}" viewBox="0 0 ${b.w} ${b.h}" `
-      + `shape-rendering="crispEdges">${img}</svg>` : '')
+    + animSprite(8, ground, STRIP_SPR, b)
     + `</svg>`
 }
 
-function card(pet, name, pct, img, b) {
+function card(pet, name, pct, b) {
   const font = `font-family="ui-monospace, SFMono-Regular, Menlo, monospace"`
   const dots = team.map((_, i) => {
     const cx = 18 + i * 14
@@ -482,12 +535,7 @@ function card(pet, name, pct, img, b) {
       : `<circle cx="${cx}" cy="74" r="4" fill="none" stroke="${C.dim}" stroke-width="1.2" opacity=".55"/>`
   }).join('')
   const bx = 38, bw = 92, maxed = pct >= 100
-  const sw = Math.round(SVG_H * b.w / b.h), x = STAGE_X + 8 + (P.x || 0)
-  const sprite = img
-    ? `<ellipse cx="${x + sw / 2}" cy="${GROUND}" rx="${sw * 0.28}" ry="3" fill="#000" opacity=".22"/>`
-      + `<svg x="${x}" y="${GROUND - SVG_H + 3}" width="${sw}" height="${SVG_H}" viewBox="0 0 ${b.w} ${b.h}" `
-      + `shape-rendering="crispEdges">${img}</svg>`
-    : ''
+  const sprite = animSprite(STAGE_X + 8, GROUND, SVG_H, b)
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${CARD_H}" viewBox="0 0 ${CARD_W} ${CARD_H}">`
     + `<svg x="14" y="10" width="17" height="15" viewBox="0 0 14 12" shape-rendering="crispEdges">${LOGO_SVG}</svg>`
     + `<text x="36" y="22" ${font} font-size="10" font-weight="700" letter-spacing="1.5" fill="${C.brand}">PIKAMAXXING</text>`

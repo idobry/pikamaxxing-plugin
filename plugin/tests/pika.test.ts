@@ -195,7 +195,10 @@ test('the desktop app draws the pokemon as an SVG stage with the same controls',
   expect((await ui.find({ key: 'stop' }) as any).props.label).toBe('\u23F9\uFE0E')
   expect((await ui.find({ key: 'page' }) as any).props.label).toBe('\u{1F310}\uFE0E')
   const frame: any = await ui.find({ key: 'card' })
-  expect(frame.props.borderStyle).toBe('round')
+  expect(frame.props.borderStyle).toBeUndefined() // no frame on desktop
+  // the drawing animates itself (SMIL), so the band need not redraw every tick
+  expect(svg.props.isInteractive).toBe(true)
+  expect(svg.props.source).toContain('<animate attributeName="visibility"')
   expect(JSON.stringify(frame)).toContain('"page"')
   expect(await ui.find({ type: 'Image' })).toBeUndefined()
   for (const key of ['stop', 'prev', 'next', 'page']) expect(await ui.find({ key })).toBeDefined()

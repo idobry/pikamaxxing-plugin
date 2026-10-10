@@ -259,3 +259,16 @@ test('desktop minimize shows a slim strip with an Expand button', async ($, on) 
   expect(await ui.find({ key: 'stop' })).toBeUndefined()
   await ui.unmount()
 })
+
+test('presses route by key through ui.press, across redraws (desktop stale-handle fix)', async ($, on) => {
+  const { clock } = stubs(on, { HOME: '/home/test' })
+  await $.session.start({ surface: 'desktop', isInteractive: true, cwd: '/work' })
+  await clock.advance(300)
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  await clock.advance(1000) // ten animation redraws, each with fresh handles
+  await $.ui.press({ plugin: 'pikamaxxing', key: 'next', surface: 'desktop' })
+  await clock.advance(300)
+  const svg: any = await ui.find({ type: 'Svg' })
+  expect(svg.props.source).toContain('>Onix</text>')
+  await ui.unmount()
+})

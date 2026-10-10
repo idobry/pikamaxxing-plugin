@@ -233,6 +233,19 @@ async function switchTo($, delta) {
   $.ui.invalidate('ui.render')
 }
 
+// Every button routes here by key. The band redraws 10x a second for the
+// animation and each drawing issues fresh onPress handles, so on the desktop
+// app a click's round trip lands on a handle that is already gone ("ui_press
+// not handled"). A ui.press hook runs before that lookup and keys are stable.
+function pressed($, key) {
+  return {
+    prev: () => switchTo($, -1), next: () => switchTo($, 1),
+    stop: () => setStopped($, true), resume: () => setStopped($, false),
+    page: () => openPage($),
+    minimize: () => setCompact($, true), expand: () => setCompact($, false),
+  }[key]
+}
+
 // gating events: if our hook ever fails, the call goes through untouched
 function passThrough($, e, next) {
   return next.called ? undefined : next(e)
@@ -290,6 +303,13 @@ export function register(on) {
     phase = 'alert'; quietMs = 0
     return next(e)
   }).catch(passThrough)
+
+  on('ui.press', { plugin: 'pikamaxxing' }, async ($, e, next) => {
+    const act = pressed($, e.element)
+    if (!act) return next(e)
+    await act()
+    return { element: e.element }
+  })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const want = modeFor(e.surface)

@@ -320,56 +320,44 @@ export function register(on) {
     const name = pet.species + (pet.shiny ? ' ✦' : '')
     const pct = Math.max(0, Math.min(100, pet.exp_pct ?? 0))
 
-    // desktop buttons: the default style is drawn for the app's dark theme
-    // and vanishes on cream; primary is a solid accent fill, readable anywhere
-    const dbtn = (key, label, onPress) => Button({ key, label, variant: 'primary', onPress })
+    // desktop: a red frame on the app's own background, so its native buttons
+    // look as the app intends in dark and light themes; the drawing uses
+    // mid-tone colours that read on both. Minimize/expand sits top-left.
+    const dbtn = (key, label, onPress) => Button({ key, label, onPress })
+    const corner = Box({ alignSelf: 'flex-start', children: [compact
+      ? dbtn('expand', '+', () => setCompact($, false))
+      : dbtn('minimize', '–', () => setCompact($, true))] })
+    const frame = (children) => Box({
+      flexDirection: 'column',
+      children: [
+        Box({ key: 'card', flexDirection: 'row', alignItems: 'center', width: '100%', columnGap: 2,
+              borderStyle: 'round', borderColor: C.edge, paddingX: 1, children }),
+        ...below,
+      ],
+    })
 
     if (mode === 'svg' && compact) {
-      return Box({
-        flexDirection: 'column',
-        children: [
-          Box({
-            key: 'card', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-            width: '100%', borderStyle: 'round', borderColor: C.edge, backgroundColor: C.card, paddingX: 1,
-            children: [
-              Svg({ alt: name, width: STRIP_W, height: STRIP_H, source: strip(img, b) }),
-              dbtn('expand', 'Expand', () => setCompact($, false)),
-            ],
-          }),
-          ...below,
-        ],
-      })
+      return frame([corner, Svg({ alt: name, width: STRIP_W, height: STRIP_H, source: strip(img, b) })])
     }
 
     if (mode === 'svg') {
-      // the frame is a Box so the (native, clickable) buttons sit inside it;
-      // the Svg paints its own cream too, so it reads right even unframed
-      return Box({
-        flexDirection: 'column',
-        children: [
-          Box({
-            key: 'card', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-            width: '100%', borderStyle: 'round', borderColor: C.edge, backgroundColor: C.card,
-            paddingX: 1, columnGap: 2,
-            children: [
-              Svg({ alt: name + ', ' + phaseLabel() + ', ' + pct + '% to next level',
-                    width: CARD_W, height: CARD_H, source: card(pet, name, pct, img, b) }),
-              Box({ flexDirection: 'column', rowGap: 1, children: [
-                Box({ flexDirection: 'row', columnGap: 1, children: [
-                  dbtn('prev', '‹ Prev', () => switchTo($, -1)),
-                  dbtn('next', 'Next ›', () => switchTo($, 1)),
-                  dbtn('minimize', '–', () => setCompact($, true)),
-                ] }),
-                Box({ flexDirection: 'row', columnGap: 1, children: [
-                  dbtn('stop', 'Stop', () => setStopped($, true)),
-                  dbtn('page', 'Page ↗', () => openPage($)),
-                ] }),
-              ] }),
-            ],
-          }),
-          ...below,
-        ],
-      })
+      return frame([
+        corner,
+        Svg({ alt: name + ', ' + phaseLabel() + ', ' + pct + '% to next level',
+              width: CARD_W, height: CARD_H, source: card(pet, name, pct, img, b) }),
+        Box({ flexGrow: 1 }),
+        Box({ flexDirection: 'column', rowGap: 1, children: [
+          Box({ flexDirection: 'row', columnGap: 1, children: [
+            dbtn('prev', '‹', () => switchTo($, -1)),
+            Text({ dimColor: true, children: [(idx + 1) + ' / ' + team.length] }),
+            dbtn('next', '›', () => switchTo($, 1)),
+          ] }),
+          Box({ flexDirection: 'row', columnGap: 1, children: [
+            dbtn('stop', 'Stop', () => setStopped($, true)),
+            dbtn('page', 'Trainer page ↗', () => openPage($)),
+          ] }),
+        ] }),
+      ])
     }
 
     const btn = (key, label, onPress) => Button({ key, label, plain: true, dimColor: true, onPress })
@@ -399,13 +387,13 @@ export function register(on) {
         Box({
           flexDirection: 'row',
           children: [
-            // controls: a 2x2 grid of one-glyph buttons
+            // controls: minimize in the top-left corner, then switch, then stop / page
             Box({ flexDirection: 'column', width: BTN_W, children: [
+              btn('minimize', '−', () => setCompact($, true)),
               Box({ flexDirection: 'row', columnGap: 1, children: [
                 btn('prev', '‹', () => switchTo($, -1)), btn('next', '›', () => switchTo($, 1)) ] }),
               Box({ flexDirection: 'row', columnGap: 1, children: [
                 btn('stop', '■', () => setStopped($, true)), btn('page', '↗', () => openPage($)) ] }),
-              btn('minimize', '−', () => setCompact($, true)),
             ] }),
             // who it is, how far to the next level, and whose app this is
             Box({ flexDirection: 'column', width: INFO_W, children: [
@@ -435,8 +423,9 @@ export function register(on) {
 const CARD_W = 560, CARD_H = 104
 const STAGE_X = 176, STAGE_Y = 8, STAGE_W = CARD_W - STAGE_X - 10, STAGE_H = CARD_H - 20
 const GROUND = STAGE_Y + STAGE_H - 10
-const C = { card: '#fff8e7', edge: '#7f1d1d', ink: '#3a2a1a', dim: '#6d5c3c', stage: '#f3e8c8',
-            ground: '#e2d6b0', track: '#e8dcb8', exp: '#3b82f6', max: '#b45309', ball: '#b91c1c' }
+// mid-tones that read on the desktop app's dark and light backgrounds alike
+const C = { edge: '#b91c1c', name: '#d97757', brand: '#e0553f', dim: '#8b8b8b', ground: '#8b8b8b',
+            track: 'rgba(139,139,139,.28)', exp: '#3b82f6', max: '#d4a017', ball: '#e0553f', hole: '#f5f5f5' }
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
 function phaseLabel() {
@@ -451,9 +440,8 @@ const STRIP_W = 560, STRIP_H = 40, STRIP_SPR = 32 // minimized desktop line
 function strip(img, b) {
   const sw = Math.round(STRIP_SPR * b.w / b.h), x = 8 + (P.x || 0), ground = STRIP_H - 4
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${STRIP_W}" height="${STRIP_H}" viewBox="0 0 ${STRIP_W} ${STRIP_H}">`
-    + `<rect width="${STRIP_W}" height="${STRIP_H}" fill="${C.card}"/>`
-    + `<line x1="4" y1="${ground}" x2="${STRIP_W - 4}" y2="${ground}" stroke="${C.ground}" stroke-width="1.5" stroke-linecap="round"/>`
-    + (img ? `<ellipse cx="${x + sw / 2}" cy="${ground}" rx="${sw * 0.28}" ry="2" fill="${C.edge}" opacity=".13"/>`
+    + `<line x1="4" y1="${ground}" x2="${STRIP_W - 4}" y2="${ground}" stroke="${C.ground}" stroke-opacity=".35" stroke-width="1.5" stroke-linecap="round"/>`
+    + (img ? `<ellipse cx="${x + sw / 2}" cy="${ground}" rx="${sw * 0.28}" ry="2" fill="#000" opacity=".22"/>`
       + `<svg x="${x}" y="${ground - STRIP_SPR + 2}" width="${sw}" height="${STRIP_SPR}" viewBox="0 0 ${b.w} ${b.h}" `
       + `shape-rendering="crispEdges">${img}</svg>` : '')
     + `</svg>`
@@ -464,30 +452,29 @@ function card(pet, name, pct, img, b) {
   const dots = team.map((_, i) => {
     const cx = 18 + i * 14
     return i === idx
-      ? `<circle cx="${cx}" cy="74" r="5" fill="${C.ball}" stroke="${C.edge}" stroke-width="1.5"/>`
-        + `<line x1="${cx - 5}" y1="74" x2="${cx + 5}" y2="74" stroke="${C.edge}" stroke-width="1.5"/>`
-        + `<circle cx="${cx}" cy="74" r="1.8" fill="${C.card}" stroke="${C.edge}" stroke-width="1"/>`
+      ? `<circle cx="${cx}" cy="74" r="5" fill="${C.ball}" stroke="${C.ball}" stroke-width="1.5"/>`
+        + `<line x1="${cx - 5}" y1="74" x2="${cx + 5}" y2="74" stroke="${C.hole}" stroke-width="1.2"/>`
+        + `<circle cx="${cx}" cy="74" r="1.8" fill="${C.hole}" stroke="${C.hole}" stroke-width="1"/>`
       : `<circle cx="${cx}" cy="74" r="4" fill="none" stroke="${C.dim}" stroke-width="1.2" opacity=".55"/>`
   }).join('')
   const bx = 38, bw = 92, maxed = pct >= 100
   const sw = Math.round(SVG_H * b.w / b.h), x = STAGE_X + 8 + (P.x || 0)
   const sprite = img
-    ? `<ellipse cx="${x + sw / 2}" cy="${GROUND}" rx="${sw * 0.28}" ry="3" fill="${C.edge}" opacity=".13"/>`
+    ? `<ellipse cx="${x + sw / 2}" cy="${GROUND}" rx="${sw * 0.28}" ry="3" fill="#000" opacity=".22"/>`
       + `<svg x="${x}" y="${GROUND - SVG_H + 3}" width="${sw}" height="${SVG_H}" viewBox="0 0 ${b.w} ${b.h}" `
       + `shape-rendering="crispEdges">${img}</svg>`
     : ''
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${CARD_H}" viewBox="0 0 ${CARD_W} ${CARD_H}">`
-    + `<rect width="${CARD_W}" height="${CARD_H}" fill="${C.card}"/>`
     + `<svg x="14" y="10" width="17" height="15" viewBox="0 0 14 12" shape-rendering="crispEdges">${LOGO_SVG}</svg>`
-    + `<text x="36" y="22" ${font} font-size="10" font-weight="700" letter-spacing="1.5" fill="${C.ball}">PIKAMAXXING</text>`
-    + `<text x="14" y="45" ${font} font-size="15" font-weight="700" fill="${C.ink}">${esc(name)}</text>`
+    + `<text x="36" y="22" ${font} font-size="10" font-weight="700" letter-spacing="1.5" fill="${C.brand}">PIKAMAXXING</text>`
+    + `<text x="14" y="45" ${font} font-size="15" font-weight="700" fill="${C.name}">${esc(name)}</text>`
     + `<text x="14" y="60" ${font} font-size="11" fill="${C.dim}">${esc(phaseLabel())}</text>`
     + dots
     + `<text x="14" y="96" ${font} font-size="9" font-weight="700" fill="${C.dim}">EXP</text>`
-    + `<rect x="${bx}" y="88" width="${bw}" height="9" rx="4.5" fill="${C.track}" stroke="${C.edge}" stroke-width="1.2"/>`
+    + `<rect x="${bx}" y="88" width="${bw}" height="9" rx="4.5" fill="${C.track}"/>`
     + (pct > 0 ? `<rect x="${bx}" y="88" width="${Math.max(9, bw * pct / 100).toFixed(1)}" height="9" rx="4.5" fill="${maxed ? C.max : C.exp}"/>` : '')
     + `<text x="${bx + bw + 6}" y="96" ${font} font-size="9" font-weight="700" fill="${maxed ? C.max : C.dim}">${maxed ? 'MAX' : pct + '%'}</text>`
-    + `<line x1="${STAGE_X + 6}" y1="${GROUND}" x2="${STAGE_X + STAGE_W - 6}" y2="${GROUND}" stroke="${C.ground}" stroke-width="2" stroke-linecap="round"/>`
+    + `<line x1="${STAGE_X + 6}" y1="${GROUND}" x2="${STAGE_X + STAGE_W - 6}" y2="${GROUND}" stroke="${C.ground}" stroke-opacity=".35" stroke-width="2" stroke-linecap="round"/>`
     + sprite
     + `</svg>`
 }

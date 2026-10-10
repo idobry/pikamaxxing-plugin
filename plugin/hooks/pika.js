@@ -304,18 +304,30 @@ export function register(on) {
     const pct = Math.max(0, Math.min(100, pet.exp_pct ?? 0))
 
     if (mode === 'svg') {
+      // the frame is a Box so the (native, clickable) buttons sit inside it;
+      // the Svg paints its own cream too, so it reads right even unframed
       return Box({
         flexDirection: 'column',
-        rowGap: 1,
         children: [
-          Svg({ alt: name + ', ' + phaseLabel() + ', ' + pct + '% to next level',
-                width: CARD_W, height: CARD_H, source: card(pet, name, pct, img, b) }),
-          Box({ flexDirection: 'row', columnGap: 1, children: [
-            Button({ key: 'stop', label: 'Stop', onPress: () => setStopped($, true) }),
-            Button({ key: 'prev', label: '‹ Prev', onPress: () => switchTo($, -1) }),
-            Button({ key: 'next', label: 'Next ›', onPress: () => switchTo($, 1) }),
-            Button({ key: 'page', label: 'Trainer page', onPress: () => openPage($) }),
-          ] }),
+          Box({
+            key: 'card', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+            width: '100%', borderStyle: 'round', borderColor: C.edge, backgroundColor: C.card,
+            paddingX: 1, columnGap: 2,
+            children: [
+              Svg({ alt: name + ', ' + phaseLabel() + ', ' + pct + '% to next level',
+                    width: CARD_W, height: CARD_H, source: card(pet, name, pct, img, b) }),
+              Box({ flexDirection: 'column', rowGap: 1, children: [
+                Box({ flexDirection: 'row', columnGap: 1, children: [
+                  Button({ key: 'prev', label: '‹ Prev', onPress: () => switchTo($, -1) }),
+                  Button({ key: 'next', label: 'Next ›', onPress: () => switchTo($, 1) }),
+                ] }),
+                Box({ flexDirection: 'row', columnGap: 1, children: [
+                  Button({ key: 'stop', label: 'Stop', onPress: () => setStopped($, true) }),
+                  Button({ key: 'page', label: 'Page ↗', onPress: () => openPage($) }),
+                ] }),
+              ] }),
+            ],
+          }),
           ...below,
         ],
       })
@@ -364,8 +376,8 @@ export function register(on) {
 }
 
 // ---- desktop card: one SVG in the PikaMaxxing pokedex palette ----
-const CARD_W = 440, CARD_H = 108
-const STAGE_X = 168, STAGE_Y = 10, STAGE_W = CARD_W - STAGE_X - 10, STAGE_H = CARD_H - 20
+const CARD_W = 560, CARD_H = 104
+const STAGE_X = 176, STAGE_Y = 8, STAGE_W = CARD_W - STAGE_X - 10, STAGE_H = CARD_H - 20
 const GROUND = STAGE_Y + STAGE_H - 10
 const C = { card: '#fff8e7', edge: '#7f1d1d', ink: '#3a2a1a', dim: '#6d5c3c', stage: '#f3e8c8',
             ground: '#e2d6b0', track: '#e8dcb8', exp: '#3b82f6', max: '#b45309', ball: '#b91c1c' }
@@ -396,7 +408,7 @@ function card(pet, name, pct, img, b) {
       + `shape-rendering="crispEdges">${img}</svg>`
     : ''
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${CARD_H}" viewBox="0 0 ${CARD_W} ${CARD_H}">`
-    + `<rect x="1" y="1" width="${CARD_W - 2}" height="${CARD_H - 2}" rx="10" fill="${C.card}" stroke="${C.edge}" stroke-width="2"/>`
+    + `<rect width="${CARD_W}" height="${CARD_H}" fill="${C.card}"/>`
     + `<svg x="14" y="10" width="17" height="15" viewBox="0 0 14 12" shape-rendering="crispEdges">${LOGO_SVG}</svg>`
     + `<text x="36" y="22" ${font} font-size="10" font-weight="700" letter-spacing="1.5" fill="${C.ball}">PIKAMAXXING</text>`
     + `<text x="14" y="45" ${font} font-size="15" font-weight="700" fill="${C.ink}">${esc(name)}</text>`

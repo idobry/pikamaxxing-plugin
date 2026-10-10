@@ -187,6 +187,10 @@ test('the desktop app draws the pokemon as an SVG stage with the same controls',
   expect(svg.props.source).toContain('>PIKAMAXXING</text>')
   expect(svg.props.source).toContain('>62%</text>')
   expect(svg.props.alt).toMatch(/62% to next level/)
+  // buttons live inside the frame Box, next to the drawing
+  const frame: any = await ui.find({ key: 'card' })
+  expect(frame.props.borderStyle).toBe('round')
+  expect(JSON.stringify(frame)).toContain('"page"')
   expect(await ui.find({ type: 'Image' })).toBeUndefined()
   for (const key of ['stop', 'prev', 'next', 'page']) expect(await ui.find({ key })).toBeDefined()
   await ui.unmount()

@@ -417,7 +417,7 @@ test('the desktop app draws a self-animating SVG with native buttons and no fram
   await clock.advance(300)
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
   const svg: any = await ui.find({ type: 'Svg' })
-  expect(svg.props.isInteractive).toBe(true)
+  expect(svg.props.isInteractive).toBeUndefined() // drawn as an image: no blank repaint between redraws
   expect(svg.props.source).toContain(DOT)
   expect(svg.props.source).toContain('>Pikachu</text>')
   expect(svg.props.source).toContain('<animate attributeName="visibility"')

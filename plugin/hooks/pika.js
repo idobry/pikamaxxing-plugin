@@ -5,7 +5,7 @@
 // Every session's pokemon shares one scene, so parallel agents battle when
 // idle and charge together when busy, and a pokemon that levels up evolves
 // on screen. Terminal (kitty graphics or colored cells) and desktop app (SVG).
-const VERSION = '2.1.1'
+const VERSION = '2.1.2'
 const FALLBACK = 'https://pikamaxxing.vercel.app'
 const TICK = 100         // ms per engine step; the terminal band redraws at most 10/s
 const SLEEP_MS = 300000  // quiet this long -> nap
@@ -872,12 +872,12 @@ export function register(on) {
         ...below,
       ] })
       if (compact) {
-        return row([Svg({ alt: name, width: STRIP_W, height: STRIP_H, isInteractive: true, source: strip(sp) }),
+        return row([Svg({ alt: name, width: STRIP_W, height: STRIP_H, source: strip(sp) }),
                     Box({ flexGrow: 1 }), corner])
       }
       return row([
         Svg({ alt: name + ', ' + phaseLabel(own) + ', ' + pct + '% to next level',
-              width: CARD_W, height: CARD_H, isInteractive: true, source: card(pet, name, pct, sp, own) }),
+              width: CARD_W, height: CARD_H, source: card(pet, name, pct, sp, own) }),
         Box({ flexGrow: 1 }),
         Box({ flexDirection: 'column', rowGap: 1, children: [
           Box({ flexDirection: 'row', columnGap: 1, children: [
@@ -1002,11 +1002,14 @@ function phaseLabel(p) {
 }
 
 // what the desktop drawing shows; a change here is the only thing that redraws
-// it, except during ceremonies, whose every step is a scene change
+// it, except during ceremonies (battle, evolution), redrawn 5x a second. The Svg
+// is drawn as an image, not an interactive frame: SMIL still runs in an image,
+// and swapping an image keeps the old picture until the new one is ready,
+// where a frame repaints blank on every redraw (the flicker).
 function scene() {
   const sp = scenePets()
   const busy = sp.some((p) => p.ov)
-  return [compact, team.length, me()?.slot, petOf(me() || {})?.exp_pct, busy ? Date.now() : '',
+  return [compact, team.length, me()?.slot, petOf(me() || {})?.exp_pct, busy ? Math.floor(Date.now() / 200) : '',
           ...sp.map((p) => [p.sid, p.slot, p.show, p.dir, phaseLabel(p)].join(':'))].join('|')
 }
 

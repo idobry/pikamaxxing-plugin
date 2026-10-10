@@ -44,6 +44,7 @@ const GAUGE_W = 14              // terminal EXP bar cells
 const LOGO_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAHAAAABgCAYAAADFNvbQAAABM0lEQVR42u3cUQ3CMBRA0ZXghfAzBwhAAQbwgAY8YAAFE4CD/hDUgIM18Ea7wTnfBMJu+pKXJU2Xff/sAo5DTh0fiz7/lUe4bAIKiIAIKCACUl96nA6je8gt30M/8O97YnTP2/VbJ9AIRUAEREABEZBJ98DSB+yJbfe8zfmanEAjFAEREAEFREAmtI5+QWmPKRryoh9g+P87gUYoAiIgAgqIgNQVfhdXel/IuNL7PifQCEVABERAARGQ2nugPW/ee6ITaIQiIAIKiIAIyLt7oD3PCURABBQQAREQAQVEQAREQAEREAER8GcV74mJ3gfa+h6V1r79/JxAIxQBEVBABERABBQQAREQAQVEQARkhHtiZs49MUYoAiIgAgqIgNTeA+2Jbfc8J9AIRUAEREABEZCJvQBa9TbM3y6NugAAAABJRU5ErkJggg=='
 const LOGO_SVG = '<path fill="#9c492e" d="M0 0h2v1h-2zM12 0h2v1h-2zM1 1h2v1h-2zM11 1h2v1h-2zM2 2h2v1h-2zM10 2h2v1h-2zM1 8h2v1h-2zM11 8h2v1h-2zM1 9h2v1h-2zM11 9h2v1h-2z"/><path fill="#d97757" d="M0 1h1v1h-1zM13 1h1v1h-1zM1 2h1v1h-1zM12 2h1v1h-1zM1 3h3v1h-3zM10 3h3v1h-3zM2 4h10v1h-10zM1 5h12v1h-12zM0 6h14v1h-14zM0 7h14v1h-14zM0 8h1v1h-1zM3 8h8v1h-8zM13 8h1v1h-1zM0 9h1v1h-1zM3 9h8v1h-8zM13 9h1v1h-1zM1 10h12v1h-12zM2 11h10v1h-10z"/>'
 let stopped = false
+let compact = false      // minimized: one slim line, just the pokemon
 let cols = 80            // band width, learned at render
 let phase = 'idle', tool = '', quietMs = 0
 
@@ -152,13 +153,21 @@ function step() {
 
 // where the pokemon roams: terminal columns, or CSS px on the desktop stage
 function geo() {
+  const b = box()
   if (mode === 'svg') {
-    const b = box()
-    return { w: Math.round(SVG_H * b.w / b.h), stage: STAGE_W - 16, speed: SVG_SPEED }
+    const h = compact ? STRIP_SPR : SVG_H
+    return { w: Math.round(h * b.w / b.h), stage: (compact ? STRIP_W : STAGE_W) - 16, speed: SVG_SPEED }
   }
-  const w = box().columns
+  if (compact) { // the minimized line: a 2-row pokemon after the expand button
+    const w = miniCols()
+    return { w, stage: Math.max(w, cols - 4), speed: 1 }
+  }
+  const w = b.columns
   return { w, stage: Math.max(w, cols - CTRL_W - 2), speed: 1 }
 }
+
+const MINI_ROWS = 2
+const miniCols = () => mode === 'cells' ? box().columns : Math.max(1, Math.round(box().columns * MINI_ROWS / box().rows))
 
 // current animation's frames: {ms, imgs}; cells mode only has the walk cycle
 function frameList() {
@@ -203,6 +212,13 @@ async function loadTeam($) {
   } catch (e) { /* unlinked Mac or dead server must never break the session */ }
 }
 
+async function setCompact($, value) {
+  compact = value
+  P.x = null // re-place on the new stage
+  await $.store.set('compact', value)
+  $.ui.invalidate('ui.render')
+}
+
 async function setStopped($, value) {
   stopped = value
   await $.store.set('stopped', value)
@@ -235,6 +251,7 @@ export function register(on) {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'pika', description: 'Stop or resume your PikaMaxxing pokemon' })
     stopped = (await $.store.get('stopped')) === true
+    compact = (await $.store.get('compact')) === true
     gfx = Boolean((await $.env.get('GHOSTTY_RESOURCES_DIR')) || (await $.env.get('KITTY_WINDOW_ID')))
     mode = modeFor(e.surface) || mode
     await loadTeam($)
@@ -303,6 +320,27 @@ export function register(on) {
     const name = pet.species + (pet.shiny ? ' ✦' : '')
     const pct = Math.max(0, Math.min(100, pet.exp_pct ?? 0))
 
+    // desktop buttons: the default style is drawn for the app's dark theme
+    // and vanishes on cream; primary is a solid accent fill, readable anywhere
+    const dbtn = (key, label, onPress) => Button({ key, label, variant: 'primary', onPress })
+
+    if (mode === 'svg' && compact) {
+      return Box({
+        flexDirection: 'column',
+        children: [
+          Box({
+            key: 'card', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+            width: '100%', borderStyle: 'round', borderColor: C.edge, backgroundColor: C.card, paddingX: 1,
+            children: [
+              Svg({ alt: name, width: STRIP_W, height: STRIP_H, source: strip(img, b) }),
+              dbtn('expand', 'Expand', () => setCompact($, false)),
+            ],
+          }),
+          ...below,
+        ],
+      })
+    }
+
     if (mode === 'svg') {
       // the frame is a Box so the (native, clickable) buttons sit inside it;
       // the Svg paints its own cream too, so it reads right even unframed
@@ -318,12 +356,13 @@ export function register(on) {
                     width: CARD_W, height: CARD_H, source: card(pet, name, pct, img, b) }),
               Box({ flexDirection: 'column', rowGap: 1, children: [
                 Box({ flexDirection: 'row', columnGap: 1, children: [
-                  Button({ key: 'prev', label: '‹ Prev', onPress: () => switchTo($, -1) }),
-                  Button({ key: 'next', label: 'Next ›', onPress: () => switchTo($, 1) }),
+                  dbtn('prev', '‹ Prev', () => switchTo($, -1)),
+                  dbtn('next', 'Next ›', () => switchTo($, 1)),
+                  dbtn('minimize', '–', () => setCompact($, true)),
                 ] }),
                 Box({ flexDirection: 'row', columnGap: 1, children: [
-                  Button({ key: 'stop', label: 'Stop', onPress: () => setStopped($, true) }),
-                  Button({ key: 'page', label: 'Page ↗', onPress: () => openPage($) }),
+                  dbtn('stop', 'Stop', () => setStopped($, true)),
+                  dbtn('page', 'Page ↗', () => openPage($)),
                 ] }),
               ] }),
             ],
@@ -333,11 +372,27 @@ export function register(on) {
       })
     }
 
+    const btn = (key, label, onPress) => Button({ key, label, plain: true, dimColor: true, onPress })
+    if (compact) { // minimized: the pokemon walks one slim line, nothing else asks for attention
+      const m = mode === 'png'
+        ? Image({ key: 'pika', source: { png: img }, columns: miniCols(), rows: MINI_ROWS, alt: pet.species })
+        : Raster({ key: 'pika', columns: b.columns, rows: b.rows, cells: img })
+      return Box({
+        flexDirection: 'column',
+        children: [
+          Box({ flexDirection: 'row', children: [
+            Box({ width: 3, children: [btn('expand', '+', () => setCompact($, false))] }),
+            Box({ paddingLeft: P.x || 0, children: [m] }),
+          ] }),
+          ...below,
+        ],
+      })
+    }
+
     const mon = mode === 'png'
       ? Image({ key: 'pika', source: { png: img }, columns: b.columns, rows: b.rows, alt: pet.species })
       : Raster({ key: 'pika', columns: b.columns, rows: b.rows, cells: img })
     const full = Math.round(GAUGE_W * pct / 100)
-    const btn = (key, label, onPress) => Button({ key, label, plain: true, dimColor: true, onPress })
     return Box({
       flexDirection: 'column',
       children: [
@@ -350,6 +405,7 @@ export function register(on) {
                 btn('prev', '‹', () => switchTo($, -1)), btn('next', '›', () => switchTo($, 1)) ] }),
               Box({ flexDirection: 'row', columnGap: 1, children: [
                 btn('stop', '■', () => setStopped($, true)), btn('page', '↗', () => openPage($)) ] }),
+              btn('minimize', '−', () => setCompact($, true)),
             ] }),
             // who it is, how far to the next level, and whose app this is
             Box({ flexDirection: 'column', width: INFO_W, children: [
@@ -388,6 +444,19 @@ function phaseLabel() {
   if (resting && quietMs > SLEEP_MS) return 'napping'
   if (phase === 'tool') return 'using ' + (tool || 'a tool')
   return { think: 'thinking…', done: 'done!', alert: 'needs you', idle: 'hanging out' }[phase] || 'hanging out'
+}
+
+const STRIP_W = 560, STRIP_H = 40, STRIP_SPR = 32 // minimized desktop line
+
+function strip(img, b) {
+  const sw = Math.round(STRIP_SPR * b.w / b.h), x = 8 + (P.x || 0), ground = STRIP_H - 4
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${STRIP_W}" height="${STRIP_H}" viewBox="0 0 ${STRIP_W} ${STRIP_H}">`
+    + `<rect width="${STRIP_W}" height="${STRIP_H}" fill="${C.card}"/>`
+    + `<line x1="4" y1="${ground}" x2="${STRIP_W - 4}" y2="${ground}" stroke="${C.ground}" stroke-width="1.5" stroke-linecap="round"/>`
+    + (img ? `<ellipse cx="${x + sw / 2}" cy="${ground}" rx="${sw * 0.28}" ry="2" fill="${C.edge}" opacity=".13"/>`
+      + `<svg x="${x}" y="${ground - STRIP_SPR + 2}" width="${sw}" height="${STRIP_SPR}" viewBox="0 0 ${b.w} ${b.h}" `
+      + `shape-rendering="crispEdges">${img}</svg>` : '')
+    + `</svg>`
 }
 
 function card(pet, name, pct, img, b) {

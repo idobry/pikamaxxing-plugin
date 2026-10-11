@@ -5,7 +5,7 @@
 // Every session's pokemon shares one scene, so parallel agents battle when
 // idle and charge together when busy, and a pokemon that levels up evolves
 // on screen. Terminal (kitty graphics or colored cells) and desktop app (SVG).
-const VERSION = '2.3.0'
+const VERSION = '2.3.1'
 const FALLBACK = 'https://pikamaxxing.vercel.app'
 const TICK = 50          // ms per engine step; the terminal band redraws at most 20/s
 const SLEEP_MS = 300000  // quiet this long -> nap
@@ -766,7 +766,9 @@ async function pikaCommand($, args) {
   }
   if (account === 'unlinked') return 'Not linked yet. Sign in at ' + FALLBACK + ', then run the /pika link line from your trainer page.'
   const p = me(), pet = p && petOf(p)
+  const st = pet?.stats
   return (pet ? pet.species + ' · ' + pet.tokens.toLocaleString() + ' tokens · ' + (pet.exp_pct ?? 0) + '% to next level\n' : '')
+    + (st ? 'Grade ' + st.grade + ' · L' + st.level + ' · HP ' + st.hp + ' · ATK ' + st.atk + ' · DEF ' + st.def + ' · SPD ' + st.spd + '\n' : '')
     + 'Commands: /pika link <secret> · /pika unlink · /pika stop · /pika resume · /pika battle [off|on]'
 }
 
@@ -1029,7 +1031,7 @@ export function register(on) {
     }
 
     const full = Math.round(GAUGE_W * pct / 100)
-    const lvl = pet.stats ? 'L' + pet.stats.level + ' ' : ''
+    const lvl = pet.stats ? 'L' + pet.stats.level + ' ' + pet.stats.grade + ' ' : ''
     return Box({ flexDirection: 'column', children: [
       Box({ flexDirection: 'row', children: [
         // left: the brand, centred in the band's height; during a fight, the battle message

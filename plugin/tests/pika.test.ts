@@ -17,7 +17,8 @@ const BLUE = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4nGNkYPj/n4
 const WHITE = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFUlEQVR4nGP8////fwYGBgYmBigAAD34BADaOyqcAAAAAElFTkSuQmCC'
 const SECRET = 'a'.repeat(32)
 
-const PIKACHU = { id: 1, species: 'Pikachu', dex: '0025', sprite: '0025', tokens: 12345, team_pos: 1, shiny: false, exp_pct: 62 }
+const PIKACHU = { id: 1, species: 'Pikachu', dex: '0025', sprite: '0025', tokens: 12345, team_pos: 1, shiny: false, exp_pct: 62,
+  stats: { level: 1, grade: 'B', hp: 11, atk: 6, def: 5, spd: 6 } }
 const ONIX = { id: 2, species: 'Onix', dex: '0095', sprite: '0095', tokens: 5, team_pos: 2, shiny: false, exp_pct: 100 }
 
 // /api/pack: one canvas box; Idle (with white evolution silhouettes), sideways
@@ -188,6 +189,13 @@ test('/pika link checks the secret, saves it, and the pokemon appears', async ($
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await ui.find({ key: 'pika' })).toBeDefined()
   await ui.unmount()
+})
+
+test('/pika shows the lead pokemon stats', async ($, on) => {
+  stubs(on)
+  await start($)
+  const r: any = await $.command.run({ command: 'pika', args: '' })
+  expect(r.text).toMatch(/Grade B · L1 · HP 11 · ATK 6 · DEF 5 · SPD 6/)
 })
 
 test('an unknown secret is refused', async ($, on) => {
